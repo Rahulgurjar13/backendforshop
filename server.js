@@ -18,7 +18,7 @@ const contactRoutes = require('./routes/contact');
 
 // Initialize Express
 const app = express();
-
+app.set('trust proxy', 1);
 // Ensure uploads directory and default files
 const uploadsDir = path.join(__dirname, 'uploads');
 const ensureUploadsDir = async () => {
