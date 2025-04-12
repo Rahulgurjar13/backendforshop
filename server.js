@@ -65,11 +65,12 @@ const limiter = rateLimit({
 });
 app.use(limiter); // Apply globally
 
+
 // Middleware
 app.use(express.json());
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors({
-  origin: 'https://nisarmitri.vercel.app'||process.env.FRONTEND_URL ,
+  origin: 'https://www.nisargmaitri.in'||process.env.FRONTEND_URL ,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   credentials: true,
 }));
