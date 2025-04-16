@@ -7,8 +7,8 @@ const nodemailer = require('nodemailer');
 const transporter = nodemailer.createTransport({
   service: 'gmail',
   auth: {
-    user: process.env.EMAIL_USER, 
-    pass: process.env.EMAIL_PASS, 
+    user: process.env.EMAIL_USER, // genaiburahul@gmail.com
+    pass: process.env.EMAIL_PASS, // tsvb jpuj qasq hlzx
   },
   debug: process.env.NODE_ENV === 'development', // Enable debug in development
   logger: process.env.NODE_ENV === 'development', // Log to console in development
