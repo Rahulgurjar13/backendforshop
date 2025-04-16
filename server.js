@@ -10,7 +10,7 @@ const orderRoutes = require('./routes/orders');
 const { checkAdminStatus } = require('./middleware/authenticateAdmin');
 
 // Validate critical environment variables
-const requiredEnvVars = ['MONGO_URI', 'JWT_SECRET', 'RAZORPAY_KEY_ID'];
+const requiredEnvVars = ['MONGO_URI', 'JWT_SECRET', 'RAZORPAY_KEY_ID', 'RAZORPAY_KEY_SECRET'];
 const missingEnvVars = requiredEnvVars.filter((varName) => !process.env[varName]);
 if (missingEnvVars.length > 0) {
   console.error(`❌ Missing environment variables: ${missingEnvVars.join(', ')}`);
@@ -21,12 +21,12 @@ if (missingEnvVars.length > 0) {
 const app = express();
 app.set('trust proxy', 1);
 
-// Rate Limit Middleware with keyGenerator
+// Rate Limit Middleware
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: process.env.NODE_ENV === 'production' ? 100 : 1000,
   message: 'Too many requests from this IP, please try again later.',
-  keyGenerator: (req) => req.ip, // Consistent IP-based limiting
+  keyGenerator: (req) => req.ip,
   handler: (req, res, next, options) => {
     console.warn(
       `Rate limit exceeded for IP: ${req.ip}. Requests: ${req.rateLimit.current}/${req.rateLimit.limit}`
@@ -60,6 +60,7 @@ console.log('Environment:', {
   MONGO_URI: process.env.MONGO_URI ? 'Set' : 'Not set',
   JWT_SECRET: process.env.JWT_SECRET ? 'Set' : 'Not set',
   RAZORPAY_KEY_ID: process.env.RAZORPAY_KEY_ID ? 'Set' : 'Not set',
+  RAZORPAY_KEY_SECRET: process.env.RAZORPAY_KEY_SECRET ? 'Set' : 'Not set',
   CORS_ORIGINS: process.env.CORS_ORIGINS || 'https://www.nisargmaitri.in',
 });
 
