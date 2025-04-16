@@ -3,14 +3,14 @@ const router = express.Router();
 const Contact = require('../models/Contact');
 const nodemailer = require('nodemailer');
 
-// Configure Nodemailer transporter with debug logging for troubleshooting
+// Configure Nodemailer transporter with App Password
 const transporter = nodemailer.createTransport({
   service: 'gmail',
   auth: {
-    user: process.env.EMAIL_USER, // Your Gmail address
-    pass: process.env.EMAIL_PASS, // Your App-Specific Password
+    user: process.env.EMAIL_USER, 
+    pass: process.env.EMAIL_PASS, 
   },
-  debug: process.env.NODE_ENV === 'development', // Enable debug only in development
+  debug: process.env.NODE_ENV === 'development', // Enable debug in development
   logger: process.env.NODE_ENV === 'development', // Log to console in development
 });
 
@@ -56,17 +56,17 @@ router.post('/', async (req, res) => {
     await contact.save();
     console.log('Contact form submitted:', { name: contact.name, email: contact.email, subject: contact.subject });
 
-    // Define recipient email (make it configurable via environment variable)
-    const supportEmail = process.env.SUPPORT_EMAIL || 'genaiburahul@gmail.com'; // Default to your email for testing
+    // Define recipient email (fallback to EMAIL_USER if SUPPORT_EMAIL is not set)
+    const supportEmail = process.env.SUPPORT_EMAIL || process.env.EMAIL_USER;
 
     if (!validateEmail(supportEmail)) {
-      throw new Error('Support email is not configured or invalid in .env');
+      throw new Error('Support email is not configured or invalid');
     }
 
     // Send email notification
     const mailOptions = {
-      from: process.env.EMAIL_USER,
-      to: supportEmail, // Use configurable support email
+      from: `"Contact Form" <${process.env.EMAIL_USER}>`,
+      to: supportEmail,
       subject: `New Contact Form Submission: ${subject || 'No Subject'}`,
       text: `
         New message received:
@@ -96,10 +96,10 @@ router.post('/', async (req, res) => {
 
     let errorResponse = { error: 'Failed to send message' };
 
-    if (error.response && error.response.code === 'EAUTH') {
-      errorResponse.details = 'Authentication failed. Check EMAIL_USER and EMAIL_PASS in .env.';
+    if (error.response && error.responseCode === 535) {
+      errorResponse.details = 'Authentication failed. Check EMAIL_USER and EMAIL_PASS.';
     } else if (error.code === 'EDNS' || error.code === 'EENVELOPE') {
-      errorResponse.details = 'Invalid recipient email address. Check SUPPORT_EMAIL in .env.';
+      errorResponse.details = 'Invalid recipient email address.';
     } else {
       errorResponse.details = error.message;
     }

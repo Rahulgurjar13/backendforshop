@@ -7,10 +7,19 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const User = require('./models/User');
 const orderRoutes = require('./routes/orders');
+const contactRoutes = require('./routes/contact');
 const { checkAdminStatus } = require('./middleware/authenticateAdmin');
 
 // Validate critical environment variables
-const requiredEnvVars = ['MONGO_URI', 'JWT_SECRET', 'RAZORPAY_KEY_ID', 'RAZORPAY_KEY_SECRET'];
+const requiredEnvVars = [
+  'MONGO_URI',
+  'JWT_SECRET',
+  'RAZORPAY_KEY_ID',
+  'RAZORPAY_KEY_SECRET',
+  'EMAIL_USER',
+  'EMAIL_PASS',
+  'CORS_ORIGINS',
+];
 const missingEnvVars = requiredEnvVars.filter((varName) => !process.env[varName]);
 if (missingEnvVars.length > 0) {
   console.error(`❌ Missing environment variables: ${missingEnvVars.join(', ')}`);
@@ -27,12 +36,12 @@ const limiter = rateLimit({
   max: process.env.NODE_ENV === 'production' ? 100 : 1000,
   message: 'Too many requests from this IP, please try again later.',
   keyGenerator: (req) => req.ip,
-  handler: (req, res, next, options) => {
+  handler: (req, res) => {
     console.warn(
       `Rate limit exceeded for IP: ${req.ip}. Requests: ${req.rateLimit.current}/${req.rateLimit.limit}`
     );
-    res.status(options.statusCode).json({
-      error: options.message,
+    res.status(429).json({
+      error: 'Too many requests',
       retryAfter: Math.ceil((req.rateLimit.resetTime - Date.now()) / 1000),
     });
   },
@@ -41,7 +50,18 @@ app.use(limiter);
 
 // Middleware
 app.use(express.json());
-app.use(helmet({ contentSecurityPolicy: false }));
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        connectSrc: ["'self'", 'https://api.razorpay.com'],
+      },
+    },
+  })
+);
 app.use(
   cors({
     origin: process.env.CORS_ORIGINS
@@ -55,16 +75,15 @@ app.use(
 // Debug environment
 console.log('Environment:', {
   NODE_ENV: process.env.NODE_ENV || 'development',
-  RateLimitMax: process.env.NODE_ENV === 'production' ? 100 : 1000,
   PORT: process.env.PORT || 5001,
   MONGO_URI: process.env.MONGO_URI ? 'Set' : 'Not set',
   JWT_SECRET: process.env.JWT_SECRET ? 'Set' : 'Not set',
   RAZORPAY_KEY_ID: process.env.RAZORPAY_KEY_ID ? 'Set' : 'Not set',
-  RAZORPAY_KEY_SECRET: process.env.RAZORPAY_KEY_SECRET ? 'Set' : 'Not set',
+  EMAIL_USER: process.env.EMAIL_USER ? 'Set' : 'Not set',
   CORS_ORIGINS: process.env.CORS_ORIGINS || 'https://www.nisargmaitri.in',
 });
 
-// Authentication route: Login (plain text passwords, as requested)
+// Authentication route: Login
 app.post('/api/auth/login', async (req, res) => {
   const { email, password } = req.body;
 
@@ -97,6 +116,7 @@ app.get('/api/auth/check-admin', checkAdminStatus);
 
 // Routes
 app.use('/api/orders', orderRoutes);
+app.use('/api/contact', contactRoutes);
 
 // Health Check
 app.get('/health', (req, res) => {
@@ -105,14 +125,11 @@ app.get('/health', (req, res) => {
 
 // MongoDB Connection with exponential backoff
 const connectDB = async (retries = 5, delay = 5000) => {
-  if (!process.env.MONGO_URI) {
-    console.error('MONGO_URI not defined in .env');
-    process.exit(1);
-  }
-
   try {
     await mongoose.connect(process.env.MONGO_URI, {
       serverSelectionTimeoutMS: 5000,
+      connectTimeoutMS: 10000,
+      socketTimeoutMS: 45000,
     });
     console.log('✅ MongoDB connected to', process.env.MONGO_URI.replace(/\/\/.*@/, '//[credentials]@'));
   } catch (err) {
@@ -130,8 +147,19 @@ connectDB();
 
 // Start Server
 const PORT = process.env.PORT || 5001;
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
+});
+
+// Handle uncaught exceptions and rejections
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', err.message);
+  server.close(() => process.exit(1));
+});
+
+process.on('unhandledRejection', (err) => {
+  console.error('Unhandled Rejection:', err.message);
+  server.close(() => process.exit(1));
 });
 
 // Global Error Handler
