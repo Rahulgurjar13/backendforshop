@@ -1,5 +1,4 @@
-// middleware/authenticateAdmin.js
-require('dotenv').config(); // Ensure environment variables are loaded
+require('dotenv').config();
 const jwt = require('jsonwebtoken');
 const { promisify } = require('util');
 
@@ -13,8 +12,7 @@ const authenticateAdmin = async (req, res, next) => {
 
   try {
     const verifyAsync = promisify(jwt.verify);
-    const decoded = await verifyAsync(token, process.env.JWT_SECRET || '8f62a3b2c5e9d1f7a8b4c3d2e1f5a9b8');
-
+    const decoded = await verifyAsync(token, process.env.JWT_SECRET);
     if (!decoded.isAdmin) {
       console.log(`User ${decoded.email || decoded.id} is not an admin`);
       return res.status(403).json({ error: 'Admin access required' });
@@ -46,7 +44,7 @@ const checkAdminStatus = async (req, res) => {
 
   try {
     const verifyAsync = promisify(jwt.verify);
-    const decoded = await verifyAsync(token, process.env.JWT_SECRET || '8f62a3b2c5e9d1f7a8b4c3d2e1f5a9b8');
+    const decoded = await verifyAsync(token, process.env.JWT_SECRET);
     return res.status(200).json({ isAdmin: !!decoded.isAdmin, email: decoded.email });
   } catch (error) {
     console.error('Check admin status failed:', error.message);

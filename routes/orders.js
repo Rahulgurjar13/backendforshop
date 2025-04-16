@@ -1,28 +1,128 @@
 const express = require('express');
 const router = express.Router();
-const Order = require('../models/order'); // Assuming you have an Order model
+const Order = require('../models/Order');
+const Razorpay = require('razorpay');
+const crypto = require('crypto');
+const { authenticateAdmin } = require('../middleware/authenticateAdmin');
 
-// POST: Create a new order
+// Initialize Razorpay
+const razorpay = new Razorpay({
+  key_id: process.env.RAZORPAY_KEY_ID,
+  key_secret: process.env.RAZORPAY_KEY_SECRET,
+});
+
+// POST /api/orders - Create a new order
 router.post('/', async (req, res) => {
   try {
     const orderData = req.body;
-    const order = new Order(orderData);
+
+    // Validate required fields
+    if (!orderData.customer || !orderData.shippingAddress || !orderData.items || !orderData.total) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    // Generate unique orderId
+    const orderId = `ORDER-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+
+    let razorpayOrder;
+    if (orderData.paymentMethod !== 'COD') {
+      // Create Razorpay order
+      razorpayOrder = await razorpay.orders.create({
+        amount: Math.round(orderData.total * 100), // Convert to paise
+        currency: 'INR',
+        receipt: orderId,
+      });
+    }
+
+    // Create order in MongoDB
+    const order = new Order({
+      ...orderData,
+      orderId,
+      razorpayOrderId: razorpayOrder?.id,
+      paymentStatus: orderData.paymentMethod === 'COD' ? 'Pending' : 'Pending',
+    });
+
     await order.save();
-    res.status(201).json({ order });
+
+    console.log('Order created:', orderId);
+    res.status(201).json({
+      order,
+      razorpayOrder: razorpayOrder
+        ? {
+            id: razorpayOrder.id,
+            amount: razorpayOrder.amount,
+            currency: razorpayOrder.currency,
+          }
+        : null,
+    });
   } catch (error) {
-    console.error('Error creating order:', error);
-    res.status(500).json({ error: 'Failed to create order' });
+    console.error('Error creating order:', error.message);
+    if (error.code === 11000) {
+      return res.status(400).json({ error: 'Duplicate order ID' });
+    }
+    res.status(500).json({ error: 'Failed to create order', details: error.message });
   }
 });
 
-// GET: Fetch all orders
-router.get('/', async (req, res) => {
+// GET /api/orders - Retrieve orders (admin only)
+router.get('/', authenticateAdmin, async (req, res) => {
   try {
-    const orders = await Order.find();
-    res.status(200).json(orders);
+    const { startDate, endDate } = req.query;
+
+    const query = {};
+    if (startDate && endDate) {
+      query.date = {
+        $gte: new Date(startDate),
+        $lte: new Date(new Date(endDate).setHours(23, 59, 59, 999)),
+      };
+    }
+
+    const orders = await Order.find(query).sort({ date: -1 });
+    console.log(`Fetched ${orders.length} orders`);
+    res.json(orders);
   } catch (error) {
-    console.error('Error fetching orders:', error);
-    res.status(500).json({ error: 'Failed to fetch orders' });
+    console.error('Error fetching orders:', error.message);
+    res.status(500).json({ error: 'Failed to fetch orders', details: error.message });
+  }
+});
+
+// POST /api/orders/verify-payment - Verify Razorpay payment
+router.post('/verify-payment', async (req, res) => {
+  try {
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature, orderId } = req.body;
+
+    if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature || !orderId) {
+      return res.status(400).json({ error: 'Missing payment verification details' });
+    }
+
+    // Verify signature
+    const generatedSignature = crypto
+      .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
+      .update(`${razorpay_order_id}|${razorpay_payment_id}`)
+      .digest('hex');
+
+    if (generatedSignature !== razorpay_signature) {
+      console.warn('Invalid payment signature for order:', orderId);
+      return res.status(400).json({ error: 'Invalid payment signature' });
+    }
+
+    // Update order with payment details
+    const order = await Order.findOneAndUpdate(
+      { orderId },
+      { razorpayPaymentId: razorpay_payment_id, paymentStatus: 'Paid' },
+      { new: true }
+    );
+
+    if (!order) {
+      console.warn('Order not found for verification:', orderId);
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    console.log('Payment verified for order:', orderId);
+    res.json({ status: 'success', order });
+  } catch (error) {
+    console.error('Error verifying payment:', error.message);
+    res.status(500).json({ error: 'Failed to verify payment', details: error.message });
   }
 });
 

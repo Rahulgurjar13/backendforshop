@@ -5,102 +5,51 @@ const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
-const path = require('path');
-const fs = require('fs').promises;
-const nodemailer = require('nodemailer'); // New: Explicitly import nodemailer
-
-// Models and Routes
 const User = require('./models/User');
-const Contact = require('./models/Contact');
 const orderRoutes = require('./routes/orders');
-const postRoutes = require('./routes/posts');
-const contactRoutes = require('./routes/contact');
+const { checkAdminStatus } = require('./middleware/authenticateAdmin');
 
 // Initialize Express
 const app = express();
 app.set('trust proxy', 1);
-// Ensure uploads directory and default files
-const uploadsDir = path.join(__dirname, 'uploads');
-const ensureUploadsDir = async () => {
-  try {
-    await fs.mkdir(uploadsDir, { recursive: true });
-    console.log('Uploads directory ensured:', uploadsDir);
-
-    const placeholderImage = Buffer.from(
-      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/wcAAwAB/iglAAAAAElFTkSuQmCC',
-      'base64'
-    );
-
-    const defaultAvatar = path.join(uploadsDir, 'default-avatar.jpg');
-    const placeholder = path.join(uploadsDir, 'placeholder.jpg');
-
-    await Promise.all([
-      fs.stat(defaultAvatar).catch(async () => {
-        await fs.writeFile(defaultAvatar, placeholderImage);
-        console.log('Created default-avatar.jpg');
-      }),
-      fs.stat(placeholder).catch(async () => {
-        await fs.writeFile(placeholder, placeholderImage);
-        console.log('Created placeholder.jpg');
-      }),
-    ]);
-  } catch (err) {
-    console.error('Failed to set up uploads directory or files:', err);
-  }
-};
-ensureUploadsDir();
 
 // Rate Limit Middleware
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: process.env.NODE_ENV === 'production' ? 100 : 1000, // 100 requests in prod, 1000 in dev
+  max: process.env.NODE_ENV === 'production' ? 100 : 1000,
   message: 'Too many requests from this IP, please try again later.',
   handler: (req, res, next, options) => {
     console.warn(`Rate limit exceeded for IP: ${req.ip}. Requests: ${req.rateLimit.current}/${req.rateLimit.limit}`);
     res.status(options.statusCode).json({
       error: options.message,
-      retryAfter: Math.ceil((req.rateLimit.resetTime - Date.now()) / 1000), // Seconds until reset
+      retryAfter: Math.ceil((req.rateLimit.resetTime - Date.now()) / 1000),
     });
   },
 });
-app.use(limiter); // Apply globally
-
+app.use(limiter);
 
 // Middleware
 app.use(express.json());
 app.use(helmet({ contentSecurityPolicy: false }));
-app.use(cors({
-  origin: 'https://www.nisargmaitri.in'||process.env.FRONTEND_URL ,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  credentials: true,
-}));
-
-// Serve static files with explicit CORS headers
-app.use('/uploads', (req, res, next) => {
-  const origin = req.get('Origin') || 'http://localhost:5173';
-  console.log(`Serving ${req.path} to ${origin} from ${req.ip}`);
-  res.set({
-    'Access-Control-Allow-Origin': origin,
-    'Access-Control-Allow-Methods': 'GET, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
-    'Cross-Origin-Resource-Policy': 'cross-origin',
-  });
-  express.static(uploadsDir)(req, res, next);
-}, (req, res) => {
-  console.warn(`File not found: ${req.path}`);
-  res.status(404).json({ error: 'File not found' });
-});
+app.use(
+  cors({
+    origin: ['https://www.nisargmaitri.in'],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    credentials: true,
+  })
+);
 
 // Debug environment
 console.log('Environment:', {
   NODE_ENV: process.env.NODE_ENV || 'development',
   RateLimitMax: process.env.NODE_ENV === 'production' ? 100 : 1000,
   PORT: process.env.PORT || 5001,
-  EMAIL_USER: process.env.EMAIL_USER ? 'Set' : 'Not set', // New: Check email config
-  EMAIL_PASS: process.env.EMAIL_PASS ? 'Set' : 'Not set', // New: Check email config
+  MONGO_URI: process.env.MONGO_URI ? 'Set' : 'Not set',
+  JWT_SECRET: process.env.JWT_SECRET ? 'Set' : 'Not set',
+  RAZORPAY_KEY_ID: process.env.RAZORPAY_KEY_ID ? 'Set' : 'Not set',
 });
 
-// Authentication route: Login (No hashing)
+// Authentication route: Login (plain text passwords)
 app.post('/api/auth/login', async (req, res) => {
   const { email, password } = req.body;
 
@@ -117,7 +66,7 @@ app.post('/api/auth/login', async (req, res) => {
 
     const token = jwt.sign(
       { id: user._id, email: user.email, isAdmin: user.isAdmin },
-      process.env.JWT_SECRET || '8f62a3b2c5e9d1f7a8b4c3d2e1f5a9b8',
+      process.env.JWT_SECRET,
       { expiresIn: '1h' }
     );
     console.log('Login successful for:', user.email);
@@ -129,13 +78,10 @@ app.post('/api/auth/login', async (req, res) => {
 });
 
 // Admin status check
-const { checkAdminStatus } = require('./middleware/authenticateAdmin');
 app.get('/api/auth/check-admin', checkAdminStatus);
 
 // Routes
 app.use('/api/orders', orderRoutes);
-app.use('/api/posts', postRoutes);
-app.use('/api/contact', contactRoutes);
 
 // Health Check
 app.get('/health', (req, res) => {
@@ -172,9 +118,6 @@ app.use((err, req, res, next) => {
   console.error('Server Error:', err.stack);
   if (err instanceof mongoose.Error.ValidationError) {
     return res.status(400).json({ error: 'Validation error', details: err.errors });
-  }
-  if (err.name === 'MulterError') {
-    return res.status(400).json({ error: `File upload error: ${err.message}` });
   }
   res.status(500).json({ error: 'Internal server error', details: err.message });
 });
