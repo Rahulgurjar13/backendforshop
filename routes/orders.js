@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const Order = require('../models/Order');
+const Order = require('../models/order');
 const Razorpay = require('razorpay');
 const crypto = require('crypto');
 const { authenticateAdmin } = require('../middleware/authenticateAdmin');
@@ -67,18 +67,32 @@ router.post('/', async (req, res) => {
 // GET /api/orders - Retrieve orders (admin only)
 router.get('/', authenticateAdmin, async (req, res) => {
   try {
-    const { startDate, endDate } = req.query;
+    const { startDate, endDate, orderId } = req.query;
 
+    // Validate query parameters
     const query = {};
-    if (startDate && endDate) {
-      query.date = {
-        $gte: new Date(startDate),
-        $lte: new Date(new Date(endDate).setHours(23, 59, 59, 999)),
-      };
+    if (startDate) {
+      if (!isValidDate(startDate)) {
+        return res.status(400).json({ error: 'Invalid startDate format' });
+      }
+      query.date = { $gte: new Date(startDate) };
+    }
+    if (endDate) {
+      if (!isValidDate(endDate)) {
+        return res.status(400).json({ error: 'Invalid endDate format' });
+      }
+      query.date = query.date || {};
+      query.date.$lte = new Date(new Date(endDate).setHours(23, 59, 59, 999));
+    }
+    if (orderId) {
+      if (typeof orderId !== 'string' || orderId.trim() === '') {
+        return res.status(400).json({ error: 'Invalid orderId' });
+      }
+      query.orderId = { $regex: orderId.trim(), $options: 'i' }; // Case-insensitive partial match
     }
 
     const orders = await Order.find(query).sort({ date: -1 });
-    console.log(`Fetched ${orders.length} orders`);
+    console.log(`Fetched ${orders.length} orders with query:`, JSON.stringify(query));
     res.json(orders);
   } catch (error) {
     console.error('Error fetching orders:', error.message);
@@ -125,5 +139,11 @@ router.post('/verify-payment', async (req, res) => {
     res.status(500).json({ error: 'Failed to verify payment', details: error.message });
   }
 });
+
+// Helper function to validate date strings
+function isValidDate(dateString) {
+  const date = new Date(dateString);
+  return date instanceof Date && !isNaN(date);
+}
 
 module.exports = router;
