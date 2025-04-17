@@ -1,9 +1,9 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const Order = require('../models/order');
-const Razorpay = require('razorpay');
-const crypto = require('crypto');
-const { authenticateAdmin } = require('../middleware/authenticateAdmin');
+const Order = require("../models/order");
+const Razorpay = require("razorpay");
+const crypto = require("crypto");
+const { authenticateAdmin } = require("../middleware/authenticateAdmin");
 
 // Initialize Razorpay
 const razorpay = new Razorpay({
@@ -12,24 +12,29 @@ const razorpay = new Razorpay({
 });
 
 // POST /api/orders - Create a new order
-router.post('/', async (req, res) => {
+router.post("/", async (req, res) => {
   try {
     const orderData = req.body;
 
     // Validate required fields
-    if (!orderData.customer || !orderData.shippingAddress || !orderData.items || !orderData.total) {
-      return res.status(400).json({ error: 'Missing required fields' });
+    if (
+      !orderData.customer ||
+      !orderData.shippingAddress ||
+      !orderData.items ||
+      !orderData.total
+    ) {
+      return res.status(400).json({ error: "Missing required fields" });
     }
 
     // Generate unique orderId
     const orderId = `ORDER-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 
     let razorpayOrder;
-    if (orderData.paymentMethod !== 'COD') {
+    if (orderData.paymentMethod !== "COD") {
       // Create Razorpay order
       razorpayOrder = await razorpay.orders.create({
         amount: Math.round(orderData.total * 100), // Convert to paise
-        currency: 'INR',
+        currency: "INR",
         receipt: orderId,
       });
     }
@@ -39,12 +44,12 @@ router.post('/', async (req, res) => {
       ...orderData,
       orderId,
       razorpayOrderId: razorpayOrder?.id,
-      paymentStatus: orderData.paymentMethod === 'COD' ? 'Pending' : 'Pending',
+      paymentStatus: orderData.paymentMethod === "COD" ? "Pending" : "Pending",
     });
 
     await order.save();
 
-    console.log('Order created:', orderId);
+    console.log("Order created:", orderId);
     res.status(201).json({
       order,
       razorpayOrder: razorpayOrder
@@ -56,87 +61,93 @@ router.post('/', async (req, res) => {
         : null,
     });
   } catch (error) {
-    console.error('Error creating order:', error.message);
+    console.error("Error creating order:", error.message);
     if (error.code === 11000) {
-      return res.status(400).json({ error: 'Duplicate order ID' });
+      return res.status(400).json({ error: "Duplicate order ID" });
     }
-    res.status(500).json({ error: 'Failed to create order', details: error.message });
+    res.status(500).json({ error: "Failed to create order", details: error.message });
   }
 });
 
 // GET /api/orders - Retrieve orders (admin only)
-router.get('/', authenticateAdmin, async (req, res) => {
+router.get("/", authenticateAdmin, async (req, res) => {
   try {
-    const { startDate, endDate, orderId } = req.query;
+    const { date, orderId } = req.query;
 
     // Validate query parameters
     const query = {};
-    if (startDate) {
-      if (!isValidDate(startDate)) {
-        return res.status(400).json({ error: 'Invalid startDate format' });
+    if (date) {
+      if (!isValidDate(date)) {
+        return res.status(400).json({ error: "Invalid date format" });
       }
-      query.date = { $gte: new Date(startDate) };
-    }
-    if (endDate) {
-      if (!isValidDate(endDate)) {
-        return res.status(400).json({ error: 'Invalid endDate format' });
-      }
-      query.date = query.date || {};
-      query.date.$lte = new Date(new Date(endDate).setHours(23, 59, 59, 999));
+      const startOfDay = new Date(date);
+      startOfDay.setHours(0, 0, 0, 0);
+      const endOfDay = new Date(date);
+      endOfDay.setHours(23, 59, 59, 999);
+      query.date = {
+        $gte: startOfDay,
+        $lte: endOfDay,
+      };
     }
     if (orderId) {
-      if (typeof orderId !== 'string' || orderId.trim() === '') {
-        return res.status(400).json({ error: 'Invalid orderId' });
+      if (typeof orderId !== "string" || orderId.trim() === "") {
+        return res.status(400).json({ error: "Invalid orderId" });
       }
-      query.orderId = { $regex: orderId.trim(), $options: 'i' }; // Case-insensitive partial match
+      query.orderId = { $regex: orderId.trim(), $options: "i" }; // Case-insensitive partial match
     }
 
     const orders = await Order.find(query).sort({ date: -1 });
     console.log(`Fetched ${orders.length} orders with query:`, JSON.stringify(query));
     res.json(orders);
   } catch (error) {
-    console.error('Error fetching orders:', error.message);
-    res.status(500).json({ error: 'Failed to fetch orders', details: error.message });
+    console.error("Error fetching orders:", error.message);
+    res.status(500).json({ error: "Failed to fetch orders", details: error.message });
   }
 });
 
 // POST /api/orders/verify-payment - Verify Razorpay payment
-router.post('/verify-payment', async (req, res) => {
+router.post("/verify-payment", async (req, res) => {
   try {
-    const { razorpay_order_id, razorpay_payment_id, razorpay_signature, orderId } = req.body;
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature, orderId } =
+      req.body;
 
-    if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature || !orderId) {
-      return res.status(400).json({ error: 'Missing payment verification details' });
+    if (
+      !razorpay_order_id ||
+      !razorpay_payment_id ||
+      !razorpay_signature ||
+      !orderId
+    ) {
+      return res.status(400).json({ error: "Missing payment verification details" });
     }
 
     // Verify signature
     const generatedSignature = crypto
-      .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
+      .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
       .update(`${razorpay_order_id}|${razorpay_payment_id}`)
-      .digest('hex');
+      .digest("hex");
 
     if (generatedSignature !== razorpay_signature) {
-      console.warn('Invalid payment signature for order:', orderId);
-      return res.status(400).json({ error: 'Invalid payment signature' });
+      console.warn("Invalid payment signature for order:", orderId);
+      return res.status(400).json({ error: "Invalid payment signature" });
     }
 
     // Update order with payment details
     const order = await Order.findOneAndUpdate(
       { orderId },
-      { razorpayPaymentId: razorpay_payment_id, paymentStatus: 'Paid' },
+      { razorpayPaymentId: razorpay_payment_id, paymentStatus: "Paid" },
       { new: true }
     );
 
     if (!order) {
-      console.warn('Order not found for verification:', orderId);
-      return res.status(404).json({ error: 'Order not found' });
+      console.warn("Order not found for verification:", orderId);
+      return res.status(404).json({ error: "Order not found" });
     }
 
-    console.log('Payment verified for order:', orderId);
-    res.json({ status: 'success', order });
+    console.log("Payment verified for order:", orderId);
+    res.json({ status: "success", order });
   } catch (error) {
-    console.error('Error verifying payment:', error.message);
-    res.status(500).json({ error: 'Failed to verify payment', details: error.message });
+    console.error("Error verifying payment:", error.message);
+    res.status(500).json({ error: "Failed to verify payment", details: error.message });
   }
 });
 
