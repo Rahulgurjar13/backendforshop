@@ -33,7 +33,7 @@ app.set('trust proxy', 1);
 // Rate Limit Middleware
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: process.env.NODE_ENV === 'production' ? 500 : 1000, // Increased for production
+  max: process.env.NODE_ENV === 'production' ? 500 : 1000,
   message: 'Too many requests from this IP, please try again later.',
   keyGenerator: (req) => req.ip,
   handler: (req, res) => {
@@ -79,6 +79,7 @@ console.log('Environment:', {
   MONGO_URI: process.env.MONGO_URI ? 'Set' : 'Not set',
   JWT_SECRET: process.env.JWT_SECRET ? 'Set' : 'Not set',
   RAZORPAY_KEY_ID: process.env.RAZORPAY_KEY_ID ? 'Set' : 'Not set',
+  RAZORPAY_KEY_SECRET: process.env.RAZORPAY_KEY_SECRET ? 'Set' : 'Not set',
   EMAIL_USER: process.env.EMAIL_USER ? 'Set' : 'Not set',
   CORS_ORIGINS: process.env.CORS_ORIGINS || 'https://www.nisargmaitri.in',
 });
@@ -94,7 +95,7 @@ app.post('/api/auth/login', async (req, res) => {
   try {
     const user = await User.findOne({ email: email.toLowerCase() });
     if (!user || password !== user.password) {
-      console.log('Login failed for:', email);
+      console.log(`Login failed for: ${email}`);
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
@@ -103,7 +104,7 @@ app.post('/api/auth/login', async (req, res) => {
       process.env.JWT_SECRET,
       { expiresIn: '1h' }
     );
-    console.log('Login successful for:', user.email);
+    console.log(`Login successful for: ${user.email}`);
     res.json({ token, isAdmin: user.isAdmin, email: user.email });
   } catch (error) {
     console.error('Login error:', error.message);

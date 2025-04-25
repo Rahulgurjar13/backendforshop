@@ -21,16 +21,23 @@ router.post("/", async (req, res) => {
       !orderData.customer ||
       !orderData.shippingAddress ||
       !orderData.items ||
-      !orderData.total
+      !orderData.total ||
+      !orderData.paymentMethod
     ) {
       return res.status(400).json({ error: "Missing required fields" });
+    }
+
+    // Validate payment method
+    const validPaymentMethods = ["Razorpay", "COD"];
+    if (!validPaymentMethods.includes(orderData.paymentMethod)) {
+      return res.status(400).json({ error: `Invalid payment method. Must be one of: ${validPaymentMethods.join(", ")}` });
     }
 
     // Generate unique orderId
     const orderId = `ORDER-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 
     let razorpayOrder;
-    if (orderData.paymentMethod !== "COD") {
+    if (orderData.paymentMethod === "Razorpay") {
       // Create Razorpay order
       razorpayOrder = await razorpay.orders.create({
         amount: Math.round(orderData.total * 100), // Convert to paise
@@ -43,13 +50,13 @@ router.post("/", async (req, res) => {
     const order = new Order({
       ...orderData,
       orderId,
-      razorpayOrderId: razorpayOrder?.id,
+      razorpayOrderId: razorpayOrder?.id || null,
       paymentStatus: orderData.paymentMethod === "COD" ? "Pending" : "Pending",
     });
 
     await order.save();
 
-    console.log("Order created:", orderId);
+    console.log(`Order created: ${orderId} with payment method: ${orderData.paymentMethod}`);
     res.status(201).json({
       order,
       razorpayOrder: razorpayOrder
@@ -127,23 +134,27 @@ router.post("/verify-payment", async (req, res) => {
       .digest("hex");
 
     if (generatedSignature !== razorpay_signature) {
-      console.warn("Invalid payment signature for order:", orderId);
+      console.warn(`Invalid payment signature for order: ${orderId}`);
       return res.status(400).json({ error: "Invalid payment signature" });
     }
 
     // Update order with payment details
     const order = await Order.findOneAndUpdate(
       { orderId },
-      { razorpayPaymentId: razorpay_payment_id, paymentStatus: "Paid" },
+      {
+        razorpayPaymentId: razorpay_payment_id,
+        paymentStatus: "Paid",
+        updatedAt: new Date(),
+      },
       { new: true }
     );
 
     if (!order) {
-      console.warn("Order not found for verification:", orderId);
+      console.warn(`Order not found for verification: ${orderId}`);
       return res.status(404).json({ error: "Order not found" });
     }
 
-    console.log("Payment verified for order:", orderId);
+    console.log(`Payment verified for order: ${orderId}`);
     res.json({ status: "success", order });
   } catch (error) {
     console.error("Error verifying payment:", error.message);

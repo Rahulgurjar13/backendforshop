@@ -29,7 +29,7 @@ const orderSchema = new mongoose.Schema({
     state: { type: String },
     city: { type: String },
   },
-  paymentMethod: { type: String, required: true, enum: ['UPI', 'Card', 'COD'] },
+  paymentMethod: { type: String, required: true, enum: ['Razorpay', 'COD'] }, // Supports only Razorpay and COD
   razorpayPaymentId: { type: String }, // For Razorpay payments
   razorpayOrderId: { type: String }, // Razorpay order ID
   paymentStatus: { type: String, default: 'Pending', enum: ['Pending', 'Paid', 'Failed'] },
@@ -44,6 +44,16 @@ const orderSchema = new mongoose.Schema({
   ],
   date: { type: Date, default: Date.now },
   total: { type: Number, required: true, min: 0 },
+  updatedAt: { type: Date, default: Date.now }, // Tracks updates
+});
+
+// Add index for razorpayOrderId (no duplicate for orderId)
+orderSchema.index({ razorpayOrderId: 1 });
+
+// Update `updatedAt` on every save
+orderSchema.pre('save', function (next) {
+  this.updatedAt = new Date();
+  next();
 });
 
 module.exports = mongoose.model('Order', orderSchema);
