@@ -66,9 +66,7 @@ app.use(
 );
 app.use(
   cors({
-    origin: process.env.CORS_ORIGINS
-      ? process.env.CORS_ORIGINS.split(",")
-      : ["https://www.nisargmaitri.in"],
+    origin: process.env.CORS_ORIGINS.split(","),
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     credentials: true,
   })
@@ -83,9 +81,9 @@ console.log("Environment:", {
   PHONEPE_MERCHANT_ID: process.env.PHONEPE_MERCHANT_ID ? "Set" : "Not set",
   PHONEPE_SALT_KEY: process.env.PHONEPE_SALT_KEY ? "Set" : "Not set",
   EMAIL_USER: process.env.EMAIL_USER ? "Set" : "Not set",
-  CORS_ORIGINS: process.env.CORS_ORIGINS || "https://www.nisargmaitri.in",
-  BACKEND_URL: process.env.BACKEND_URL || "Not set",
-  FRONTEND_URL: process.env.FRONTEND_URL || "Not set",
+  CORS_ORIGINS: process.env.CORS_ORIGINS,
+  BACKEND_URL: process.env.BACKEND_URL,
+  FRONTEND_URL: process.env.FRONTEND_URL,
 });
 
 // Authentication route: Login
@@ -125,9 +123,7 @@ app.use("/api/contact", contactRoutes);
 
 // Health Check
 app.get("/health", (req, res) => {
-  res
-    .status(200)
-    .json({ status: "OK", message: "Server is running", timestamp: new Date() });
+  res.status(200).json({ status: "OK", message: "Server is running", timestamp: new Date() });
 });
 
 // MongoDB Connection with exponential backoff
@@ -181,9 +177,7 @@ app.use((err, req, res, next) => {
     method: req.method,
   });
   if (err instanceof mongoose.Error.ValidationError) {
-    return res
-      .status(400)
-      .json({ error: "Validation error", details: err.errors });
+    return res.status(400).json({ error: "Validation error", details: err.errors });
   }
   res.status(500).json({ error: "Internal server error", details: err.message });
 });
