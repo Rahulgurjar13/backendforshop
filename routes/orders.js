@@ -18,6 +18,7 @@ router.post("/", async (req, res) => {
   try {
     const orderData = req.body;
 
+    // Validate required fields
     if (
       !orderData.customer ||
       !orderData.shippingAddress ||
@@ -28,6 +29,7 @@ router.post("/", async (req, res) => {
       return res.status(400).json({ error: "Missing required fields" });
     }
 
+    // Validate payment method
     const validPaymentMethods = ["PhonePe", "COD"];
     if (!validPaymentMethods.includes(orderData.paymentMethod)) {
       return res.status(400).json({
@@ -35,7 +37,10 @@ router.post("/", async (req, res) => {
       });
     }
 
+    // Generate unique orderId
     const orderId = `ORDER-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+
+    // Create order in MongoDB
     const order = new Order({
       ...orderData,
       orderId,
@@ -50,7 +55,7 @@ router.post("/", async (req, res) => {
       phonepeOrder: orderData.paymentMethod === "PhonePe" ? { orderId } : null,
     });
   } catch (error) {
-    console.error("Error creating order:", error.message, error.stack);
+    console.error("Error creating order:", error.message);
     if (error.code === 11000) {
       return res.status(400).json({ error: "Duplicate order ID or transaction ID" });
     }
@@ -63,38 +68,25 @@ router.post("/initiate-phonepe-payment", async (req, res) => {
   try {
     const { orderId, amount, customer, redirectUrl, mobileNumber } = req.body;
 
-    // Validate request body
     if (!orderId || !amount || !customer || !redirectUrl || !mobileNumber) {
-      console.error("Missing required fields:", { orderId, amount, customer, redirectUrl, mobileNumber });
-      return res.status(400).json({ error: "Missing required fields: orderId, amount, customer, redirectUrl, mobileNumber" });
+      return res.status(400).json({ error: "Missing required payment initiation fields" });
     }
 
-    // Validate customer fields
-    if (!customer.email || !customer.phone) {
-      console.error("Invalid customer data:", customer);
-      return res.status(400).json({ error: "Customer email and phone are required" });
-    }
-
-    // Find order
     const order = await Order.findOne({ orderId });
     if (!order) {
-      console.error(`Order not found: ${orderId}`);
       return res.status(404).json({ error: "Order not found" });
     }
 
-    // Check payment status
     if (order.paymentStatus !== "Pending") {
-      console.error(`Payment already processed for order: ${orderId}, status: ${order.paymentStatus}`);
       return res.status(400).json({ error: "Payment already processed for this order" });
     }
 
-    // Generate transaction ID
     const transactionId = `TXN-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
     const payload = {
       merchantId: PHONEPE_MERCHANT_ID,
       merchantTransactionId: transactionId,
       merchantUserId: `MUID-${customer.email.split("@")[0]}-${Date.now()}`,
-      amount: Math.round(amount), // Ensure amount is in paise and an integer
+      amount: amount,
       redirectUrl: redirectUrl,
       redirectMode: "REDIRECT",
       callbackUrl: `${process.env.BACKEND_URL}/api/orders/phonepe-callback`,
@@ -104,52 +96,44 @@ router.post("/initiate-phonepe-payment", async (req, res) => {
       },
     };
 
-    // Log payload for debugging
-    console.log("PhonePe payload:", payload);
-
-    // Create checksum
     const payloadString = Buffer.from(JSON.stringify(payload)).toString("base64");
     const saltIndex = "1";
     const stringToHash = `${payloadString}/pg/v1/pay${PHONEPE_SALT_KEY}`;
-    const checksum = crypto.createHash("sha256").update(stringToHash).digest("hex") + "###" + saltIndex;
+    const checksum = crypto
+      .createHash("sha256")
+      .update(stringToHash)
+      .digest("hex") + "###" + saltIndex;
 
-    // Make PhonePe API call
-    try {
-      const response = await axios.post(
-        `${PHONEPE_API_URL}/pg/v1/pay`,
-        { request: payloadString },
-        {
-          headers: {
-            "Content-Type": "application/json",
-            "X-VERIFY": checksum,
-            accept: "application/json",
-          },
-          timeout: 30000,
-        }
-      );
-
-      if (!response.data.success) {
-        console.error("PhonePe API error:", response.data);
-        throw new Error(response.data.message || "PhonePe payment initiation failed");
+    const response = await axios.post(
+      `${PHONEPE_API_URL}/pg/v1/pay`,
+      { request: payloadString },
+      {
+        headers: {
+          "Content-Type": "application/json",
+          "X-VERIFY": checksum,
+          accept: "application/json",
+        },
+        timeout: 30000,
       }
+    );
 
-      const paymentUrl = response.data.data.instrumentResponse.redirectInfo.url;
-
-      // Update order with transaction ID
-      order.phonepeTransactionId = transactionId;
-      await order.save();
-
-      console.log(`PhonePe payment initiated for order: ${orderId}, transaction: ${transactionId}`);
-      res.json({ paymentUrl, transactionId });
-    } catch (apiError) {
-      console.error("PhonePe API call failed:", apiError.message, apiError.response?.data);
-      throw new Error(`PhonePe API error: ${apiError.message}`);
+    if (!response.data.success) {
+      throw new Error(response.data.message || "PhonePe payment initiation failed");
     }
+
+    const paymentUrl = response.data.data.instrumentResponse.redirectInfo.url;
+
+    // Update order with transaction ID
+    order.phonepeTransactionId = transactionId;
+    await order.save();
+
+    console.log(`PhonePe payment initiated for order: ${orderId}, transaction: ${transactionId}`);
+    res.json({ paymentUrl, transactionId });
   } catch (error) {
-    console.error("Error initiating PhonePe payment:", error.message, error.stack);
+    console.error("Error initiating PhonePe payment:", error.message);
     res.status(500).json({
       error: "Failed to initiate PhonePe payment",
-      details: error.message,
+      details: error.response?.data?.message || error.message,
     });
   }
 });
@@ -161,7 +145,6 @@ router.post("/phonepe-callback", async (req, res) => {
     const { response } = req.body;
 
     if (!xVerify || !response) {
-      console.error("Missing callback parameters:", { xVerify, response });
       return res.status(400).json({ error: "Missing required callback parameters" });
     }
 
@@ -170,7 +153,10 @@ router.post("/phonepe-callback", async (req, res) => {
 
     // Verify checksum
     const stringToHash = `${response}/pg/v1/status${PHONEPE_SALT_KEY}`;
-    const computedChecksum = crypto.createHash("sha256").update(stringToHash).digest("hex") + "###1";
+    const computedChecksum = crypto
+      .createHash("sha256")
+      .update(stringToHash)
+      .digest("hex") + "###1";
 
     if (xVerify !== computedChecksum) {
       console.warn(`Invalid checksum for transaction: ${merchantTransactionId}`);
@@ -194,9 +180,10 @@ router.post("/phonepe-callback", async (req, res) => {
       console.log(`Payment failed for order: ${order.orderId}, transaction: ${merchantTransactionId}`);
     }
 
+    // Redirect to frontend payment callback
     res.redirect(`${process.env.FRONTEND_URL}/payment-callback?transactionId=${merchantTransactionId}`);
   } catch (error) {
-    console.error("Error in PhonePe callback:", error.message, error.stack);
+    console.error("Error in PhonePe callback:", error.message);
     res.status(500).json({
       error: "Callback processing failed",
       details: error.message,
@@ -210,51 +197,45 @@ router.post("/verify-phonepe-payment", async (req, res) => {
     const { orderId, transactionId } = req.body;
 
     if (!orderId || !transactionId) {
-      console.error("Missing verification fields:", { orderId, transactionId });
       return res.status(400).json({ error: "Missing orderId or transactionId" });
     }
 
     const order = await Order.findOne({ orderId, phonepeTransactionId: transactionId });
     if (!order) {
-      console.error(`Order not found: ${orderId}, transaction: ${transactionId}`);
       return res.status(404).json({ error: "Order not found" });
     }
 
+    // Verify payment status with PhonePe
     const endpoint = `/pg/v1/status/${PHONEPE_MERCHANT_ID}/${transactionId}`;
     const stringToHash = `${endpoint}${PHONEPE_SALT_KEY}`;
     const checksum = crypto.createHash("sha256").update(stringToHash).digest("hex") + "###1";
 
-    try {
-      const response = await axios.get(`${PHONEPE_API_URL}${endpoint}`, {
-        headers: {
-          "Content-Type": "application/json",
-          "X-VERIFY": checksum,
-          "X-MERCHANT-ID": PHONEPE_MERCHANT_ID,
-          accept: "application/json",
-        },
-        timeout: 30000,
-      });
+    const response = await axios.get(`${PHONEPE_API_URL}${endpoint}`, {
+      headers: {
+        "Content-Type": "application/json",
+        "X-VERIFY": checksum,
+        "X-MERCHANT-ID": PHONEPE_MERCHANT_ID,
+        accept: "application/json",
+      },
+      timeout: 30000,
+    });
 
-      if (response.data.success && response.data.code === "PAYMENT_SUCCESS") {
-        order.paymentStatus = "Paid";
-        await order.save();
-        console.log(`Payment verified for order: ${orderId}, transaction: ${transactionId}`);
-        res.json({ success: true, order });
-      } else {
-        order.paymentStatus = "Failed";
-        await order.save();
-        console.log(`Payment verification failed for order: ${orderId}`);
-        res.json({ success: false, error: "Payment verification failed" });
-      }
-    } catch (apiError) {
-      console.error("PhonePe status check failed:", apiError.message, apiError.response?.data);
-      throw new Error(`PhonePe status check error: ${apiError.message}`);
+    if (response.data.success && response.data.code === "PAYMENT_SUCCESS") {
+      order.paymentStatus = "Paid";
+      await order.save();
+      console.log(`Payment verified for order: ${orderId}, transaction: ${transactionId}`);
+      res.json({ success: true, order });
+    } else {
+      order.paymentStatus = "Failed";
+      await order.save();
+      console.log(`Payment verification failed for order: ${orderId}`);
+      res.json({ success: false, error: "Payment verification failed" });
     }
   } catch (error) {
-    console.error("Error verifying PhonePe payment:", error.message, error.stack);
+    console.error("Error verifying PhonePe payment:", error.message);
     res.status(500).json({
       error: "Payment verification failed",
-      details: error.message,
+      details: error.response?.data?.message || error.message,
     });
   }
 });
@@ -289,7 +270,7 @@ router.get("/", authenticateAdmin, async (req, res) => {
     console.log(`Fetched ${orders.length} orders with query:`, JSON.stringify(query));
     res.json(orders);
   } catch (error) {
-    console.error("Error fetching orders:", error.message, error.stack);
+    console.error("Error fetching orders:", error.message);
     res.status(500).json({ error: "Failed to fetch orders", details: error.message });
   }
 });
