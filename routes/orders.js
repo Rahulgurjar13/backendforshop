@@ -14,6 +14,19 @@ const PHONEPE_API_URL =
     ? 'https://api.phonepe.com/apis/hermes'
     : 'https://api-testing.phonepe.com/apis/hermes';
 
+// Retry utility for API calls
+const withRetry = async (fn, retries = 3, delay = 1000) => {
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (i === retries - 1) throw error;
+      console.warn(`Retry ${i + 1}/${retries} failed:`, error.message);
+      await new Promise((resolve) => setTimeout(resolve, delay * Math.pow(2, i)));
+    }
+  }
+};
+
 // POST /api/orders - Create a new order
 router.post('/', async (req, res) => {
   try {
@@ -149,30 +162,45 @@ router.post('/initiate-phonepe-payment', async (req, res) => {
 
     console.log('Checksum Details:', { base64Payload, stringToHash, checksum });
 
-    // Make PhonePe API request
+    // Make PhonePe API request with retry
     let phonePeResponse;
     try {
-      phonePeResponse = await axios.post(
-        `${PHONEPE_API_URL}/pg/v1/pay`,
-        { request: base64Payload },
-        {
-          headers: {
-            'Content-Type': 'application/json',
-            'X-VERIFY': checksum,
-            accept: 'application/json',
-          },
-          timeout: 30000,
-        }
+      phonePeResponse = await withRetry(() =>
+        axios.post(
+          `${PHONEPE_API_URL}/pg/v1/pay`,
+          { request: base64Payload },
+          {
+            headers: {
+              'Content-Type': 'application/json',
+              'X-VERIFY': checksum,
+              accept: 'application/json',
+            },
+            timeout: 60000, // Increased to 60 seconds
+          }
+        )
       );
     } catch (phonePeError) {
       console.error('PhonePe API Error:', {
-        status: phonePeError.response?.status,
-        data: phonePeError.response?.data,
         message: phonePeError.message,
+        code: phonePeError.code,
+        response: phonePeError.response
+          ? {
+              status: phonePeError.response.status,
+              data: phonePeError.response.data,
+              headers: phonePeError.response.headers,
+            }
+          : null,
+        config: phonePeError.config
+          ? {
+              url: phonePeError.config.url,
+              headers: phonePeError.config.headers,
+              timeout: phonePeError.config.timeout,
+            }
+          : null,
       });
       return res.status(502).json({
         error: 'Failed to connect to PhonePe',
-        details: phonePeError.response?.data?.message || phonePeError.message,
+        details: phonePeError.response?.data?.message || phonePeError.message || 'Unknown error',
       });
     }
 
@@ -326,24 +354,39 @@ router.post('/verify-phonepe-payment', async (req, res) => {
 
     let response;
     try {
-      response = await axios.get(`${PHONEPE_API_URL}${endpoint}`, {
-        headers: {
-          'Content-Type': 'application/json',
-          'X-VERIFY': checksum,
-          'X-MERCHANT-ID': PHONEPE_MERCHANT_ID,
-          accept: 'application/json',
-        },
-        timeout: 30000,
-      });
+      response = await withRetry(() =>
+        axios.get(`${PHONEPE_API_URL}${endpoint}`, {
+          headers: {
+            'Content-Type': 'application/json',
+            'X-VERIFY': checksum,
+            'X-MERCHANT-ID': PHONEPE_MERCHANT_ID,
+            accept: 'application/json',
+          },
+          timeout: 60000, // Increased to 60 seconds
+        })
+      );
     } catch (phonePeError) {
       console.error('PhonePe Verification Error:', {
-        status: phonePeError.response?.status,
-        data: phonePeError.response?.data,
         message: phonePeError.message,
+        code: phonePeError.code,
+        response: phonePeError.response
+          ? {
+              status: phonePeError.response.status,
+              data: phonePeError.response.data,
+              headers: phonePeError.response.headers,
+            }
+          : null,
+        config: phonePeError.config
+          ? {
+              url: phonePeError.config.url,
+              headers: phonePeError.config.headers,
+              timeout: phonePeError.config.timeout,
+            }
+          : null,
       });
       return res.status(502).json({
         error: 'Failed to verify payment with PhonePe',
-        details: phonePeError.response?.data?.message || phonePeError.message,
+        details: phonePeError.response?.data?.message || phonePeError.message || 'Unknown error',
       });
     }
 
