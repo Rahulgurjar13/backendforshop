@@ -107,7 +107,7 @@ orderSchema.pre('validate', function (next) {
   next();
 });
 
-// Index for efficient querying (only for date, as unique fields already have indexes)
+// Index for efficient querying
 orderSchema.index({ date: -1 });
 
 module.exports = mongoose.model('Order', orderSchema);

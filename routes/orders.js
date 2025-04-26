@@ -12,7 +12,7 @@ const PHONEPE_SALT_INDEX = process.env.PHONEPE_SALT_INDEX || '1';
 const PHONEPE_API_URL =
   process.env.NODE_ENV === 'production'
     ? 'https://api.phonepe.com/apis/hermes'
-    : 'https://api-preprod.phonepe.com/apis/pg-sandbox';
+    : 'https://api-testing.phonepe.com/apis/hermes';
 
 // POST /api/orders - Create a new order
 router.post('/', async (req, res) => {
@@ -53,10 +53,7 @@ router.post('/', async (req, res) => {
     await order.save();
 
     console.log(`Order created: ${orderId} with payment method: ${orderData.paymentMethod}`);
-    res.status(201).json({
-      order,
-      phonepeOrder: orderData.paymentMethod === 'PhonePe' ? { orderId } : null,
-    });
+    res.status(201).json({ order });
   } catch (error) {
     console.error('Error creating order:', {
       message: error.message,
@@ -77,37 +74,20 @@ router.post('/initiate-phonepe-payment', async (req, res) => {
   console.log('Initiate PhonePe Payment - Request Body:', JSON.stringify(req.body, null, 2));
 
   try {
-    const {
-      orderId,
-      amount,
-      customer,
-      redirectUrl,
-      callbackUrl,
-      mobileNumber,
-      merchantUserId,
-    } = req.body;
+    const { merchantTransactionId, amount, mobileNumber, redirectUrl, callbackUrl, merchantUserId } = req.body;
+
+    // Extract orderId from merchantTransactionId (format: MT<orderId>)
+    const orderId = merchantTransactionId.startsWith('MT') ? merchantTransactionId.substring(2) : null;
 
     // Validate required fields
-    if (
-      !orderId ||
-      !amount ||
-      !customer ||
-      !customer.firstName ||
-      !customer.lastName ||
-      !customer.email ||
-      !customer.phone ||
-      !redirectUrl ||
-      !callbackUrl ||
-      !mobileNumber ||
-      !merchantUserId
-    ) {
+    if (!orderId || !merchantTransactionId || !amount || !mobileNumber || !redirectUrl || !callbackUrl || !merchantUserId) {
       console.warn('Missing required fields:', {
         orderId,
+        merchantTransactionId,
         amount,
-        customer,
+        mobileNumber,
         redirectUrl,
         callbackUrl,
-        mobileNumber,
         merchantUserId,
       });
       return res.status(400).json({ error: 'Missing required payment initiation fields' });
@@ -136,16 +116,20 @@ router.post('/initiate-phonepe-payment', async (req, res) => {
       return res.status(400).json({ error: 'Order payment already processed or invalid' });
     }
 
-    // Generate transaction ID
-    const merchantTransactionId = `TXN-${orderId}-${Date.now()}`;
+    // Validate amount (convert order.total to paise)
+    const expectedAmount = Math.round(order.total * 100);
+    if (Math.round(Number(amount)) !== expectedAmount) {
+      console.warn(`Amount mismatch for order: ${orderId}`, { requested: amount, expected: expectedAmount });
+      return res.status(400).json({ error: 'Requested amount does not match order total' });
+    }
 
     // Prepare PhonePe payload
     const payload = {
       merchantId: PHONEPE_MERCHANT_ID,
       merchantTransactionId,
       merchantUserId,
-      amount: Math.round(Number(amount)), // Ensure integer in paise
-      redirectUrl: `${redirectUrl}?transactionId=${merchantTransactionId}`,
+      amount: Math.round(Number(amount)),
+      redirectUrl,
       redirectMode: 'REDIRECT',
       callbackUrl,
       mobileNumber,
@@ -159,12 +143,9 @@ router.post('/initiate-phonepe-payment', async (req, res) => {
     // Convert payload to base64
     const base64Payload = Buffer.from(JSON.stringify(payload)).toString('base64');
 
-    // Generate checksum (corrected to use SHA256, not HMAC)
+    // Generate checksum
     const stringToHash = `${base64Payload}/pg/v1/pay${PHONEPE_SALT_KEY}`;
-    const checksum = crypto
-      .createHash('sha256')
-      .update(stringToHash)
-      .digest('hex') + `###${PHONEPE_SALT_INDEX}`;
+    const checksum = crypto.createHash('sha256').update(stringToHash).digest('hex') + `###${PHONEPE_SALT_INDEX}`;
 
     console.log('Checksum Details:', { base64Payload, stringToHash, checksum });
 
@@ -198,10 +179,7 @@ router.post('/initiate-phonepe-payment', async (req, res) => {
     console.log('PhonePe API Response:', JSON.stringify(phonePeResponse.data, null, 2));
 
     // Validate response
-    if (
-      !phonePeResponse.data.success ||
-      !phonePeResponse.data.data?.instrumentResponse?.redirectInfo?.url
-    ) {
+    if (!phonePeResponse.data.success || !phonePeResponse.data.data?.instrumentResponse?.redirectInfo?.url) {
       console.warn('Invalid PhonePe response:', phonePeResponse.data);
       return res.status(500).json({
         error: 'PhonePe payment initiation failed',
@@ -239,7 +217,7 @@ router.post('/initiate-phonepe-payment', async (req, res) => {
 router.post('/phonepe-callback', async (req, res) => {
   try {
     const xVerify = req.headers['x-verify'];
-    const { response } = req.body;
+    const response = req.body.response;
 
     console.log('PhonePe Callback - Headers:', req.headers);
     console.log('PhonePe Callback - Body:', req.body);
@@ -249,20 +227,7 @@ router.post('/phonepe-callback', async (req, res) => {
       return res.status(400).json({ error: 'Missing required callback parameters' });
     }
 
-    // Verify checksum (corrected to use SHA256)
-    const stringToHash = `${response}/pg/v1/status${PHONEPE_SALT_KEY}`;
-    const computedChecksum = crypto
-      .createHash('sha256')
-      .update(stringToHash)
-      .digest('hex') + `###${PHONEPE_SALT_INDEX}`;
-
-    console.log('Callback Checksum:', { xVerify, computedChecksum, stringToHash });
-
-    if (xVerify !== computedChecksum) {
-      console.warn('Invalid callback checksum:', { xVerify, computedChecksum });
-      return res.status(400).json({ error: 'Checksum verification failed' });
-    }
-
+    // Decode Base64 response
     let decodedResponse;
     try {
       decodedResponse = JSON.parse(Buffer.from(response, 'base64').toString('utf8'));
@@ -273,25 +238,53 @@ router.post('/phonepe-callback', async (req, res) => {
 
     console.log('Decoded Callback Response:', JSON.stringify(decodedResponse, null, 2));
 
-    const { merchantTransactionId, state, code } = decodedResponse;
+    const { merchantId, merchantTransactionId, code } = decodedResponse;
 
+    // Validate checksum
+    const stringToHash = `${response}/pg/v1/pay${PHONEPE_SALT_KEY}`;
+    const computedChecksum = crypto.createHash('sha256').update(stringToHash).digest('hex') + `###${PHONEPE_SALT_INDEX}`;
+
+    if (xVerify !== computedChecksum) {
+      console.warn('Invalid callback checksum:', { xVerify, computedChecksum });
+      return res.status(400).json({ error: 'Checksum verification failed' });
+    }
+
+    // Validate merchantId
+    if (merchantId !== PHONEPE_MERCHANT_ID) {
+      console.warn('Invalid merchantId in callback:', { received: merchantId, expected: PHONEPE_MERCHANT_ID });
+      return res.status(400).json({ error: 'Invalid merchantId' });
+    }
+
+    // Find order
     const order = await Order.findOne({ phonepeTransactionId: merchantTransactionId });
     if (!order) {
       console.warn(`Order not found for transaction: ${merchantTransactionId}`);
       return res.status(404).json({ error: 'Order not found' });
     }
 
-    if (state === 'COMPLETED' && code === 'PAYMENT_SUCCESS') {
-      order.paymentStatus = 'Paid';
-      await order.save();
-      console.log(`Payment successful for order: ${order.orderId}, transaction: ${merchantTransactionId}`);
-    } else {
-      order.paymentStatus = 'Failed';
-      await order.save();
-      console.log(
-        `Payment failed for order: ${order.orderId}, transaction: ${merchantTransactionId}, code: ${code}`
-      );
+    // Update order based on callback code
+    switch (code) {
+      case 'PAYMENT_SUCCESS':
+        order.paymentStatus = 'Paid';
+        console.log(`Payment successful for order: ${order.orderId}, transaction: ${merchantTransactionId}`);
+        break;
+      case 'PAYMENT_PENDING':
+        order.paymentStatus = 'Pending';
+        console.log(`Payment pending for order: ${order.orderId}, transaction: ${merchantTransactionId}`);
+        break;
+      case 'PAYMENT_ERROR':
+      case 'PAYMENT_DECLINED':
+      case 'TIMED_OUT':
+      case 'PAYMENT_CANCELLED':
+        order.paymentStatus = 'Failed';
+        console.log(`Payment failed for order: ${order.orderId}, transaction: ${merchantTransactionId}, code: ${code}`);
+        break;
+      default:
+        console.warn(`Unknown callback code: ${code}`);
+        return res.status(400).json({ error: `Unknown payment status: ${code}` });
     }
+
+    await order.save();
 
     res.status(200).json({ status: 'OK' });
   } catch (error) {
@@ -327,10 +320,7 @@ router.post('/verify-phonepe-payment', async (req, res) => {
     // Prepare PhonePe status check
     const endpoint = `/pg/v1/status/${PHONEPE_MERCHANT_ID}/${transactionId}`;
     const stringToHash = `${endpoint}${PHONEPE_SALT_KEY}`;
-    const checksum = crypto
-      .createHash('sha256')
-      .update(stringToHash)
-      .digest('hex') + `###${PHONEPE_SALT_INDEX}`;
+    const checksum = crypto.createHash('sha256').update(stringToHash).digest('hex') + `###${PHONEPE_SALT_INDEX}`;
 
     console.log('Verification Request:', { endpoint, stringToHash, checksum });
 
@@ -359,11 +349,36 @@ router.post('/verify-phonepe-payment', async (req, res) => {
 
     console.log('Verification Response:', JSON.stringify(response.data, null, 2));
 
-    if (response.data.success && response.data.code === 'PAYMENT_SUCCESS') {
-      order.paymentStatus = 'Paid';
+    if (response.data.success) {
+      switch (response.data.code) {
+        case 'PAYMENT_SUCCESS':
+          order.paymentStatus = 'Paid';
+          break;
+        case 'PAYMENT_PENDING':
+          order.paymentStatus = 'Pending';
+          break;
+        case 'PAYMENT_ERROR':
+        case 'PAYMENT_DECLINED':
+        case 'TIMED_OUT':
+        case 'PAYMENT_CANCELLED':
+          order.paymentStatus = 'Failed';
+          break;
+        default:
+          console.warn(`Unknown status code: ${response.data.code}`);
+          return res.status(400).json({ error: `Unknown payment status: ${response.data.code}` });
+      }
+
       await order.save();
-      console.log(`Payment verified for order: ${orderId}, transaction: ${transactionId}`);
-      res.status(200).json({ success: true, order });
+      console.log(`Payment verified for order: ${orderId}, transaction: ${transactionId}, status: ${order.paymentStatus}`);
+
+      if (order.paymentStatus === 'Paid') {
+        res.status(200).json({ success: true, order });
+      } else {
+        res.status(200).json({
+          success: false,
+          error: response.data.message || `Payment status: ${response.data.code}`,
+        });
+      }
     } else {
       order.paymentStatus = 'Failed';
       await order.save();

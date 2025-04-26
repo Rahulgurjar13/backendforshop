@@ -24,8 +24,23 @@ const requiredEnvVars = [
   'FRONTEND_URL',
 ];
 const missingEnvVars = requiredEnvVars.filter((varName) => !process.env[varName]);
-if (missingEnvVars.length > 0) {
-  console.error(`❌ Missing environment variables: ${missingEnvVars.join(', ')}`);
+const invalidEnvVars = [];
+
+if (process.env.PHONEPE_SALT_INDEX && !/^\d+$/.test(process.env.PHONEPE_SALT_INDEX)) {
+  invalidEnvVars.push('PHONEPE_SALT_INDEX must be a number (e.g., "1")');
+}
+if (process.env.CORS_ORIGINS && !process.env.CORS_ORIGINS.includes('https://www.nisargmaitri.in')) {
+  invalidEnvVars.push('CORS_ORIGINS must include https://www.nisargmaitri.in');
+}
+
+if (missingEnvVars.length > 0 || invalidEnvVars.length > 0) {
+  console.error(`❌ Environment variable errors:`);
+  if (missingEnvVars.length > 0) {
+    console.error(`  Missing: ${missingEnvVars.join(', ')}`);
+  }
+  if (invalidEnvVars.length > 0) {
+    console.error(`  Invalid: ${invalidEnvVars.join('; ')}`);
+  }
   process.exit(1);
 }
 
@@ -64,7 +79,7 @@ app.use(
         connectSrc: [
           "'self'",
           'https://api.phonepe.com',
-          'https://api-preprod.phonepe.com',
+          'https://api-testing.phonepe.com',
           'https://backendforshop.onrender.com',
           'https://www.nisargmaitri.in',
         ],
