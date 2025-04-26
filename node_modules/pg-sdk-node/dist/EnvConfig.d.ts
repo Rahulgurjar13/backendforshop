@@ -1,0 +1,11 @@
+import { Env } from './Env';
+export declare class EnvConfig {
+    private _pgHostUrl;
+    private _oAuthHostUrl;
+    private _eventsHostUrl;
+    private constructor();
+    static getBaseUrls(envType: Env): EnvConfig;
+    get pgHostUrl(): string;
+    get oAuthHostUrl(): string;
+    get eventsHostUrl(): string;
+}

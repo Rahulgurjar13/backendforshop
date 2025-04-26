@@ -1,0 +1,12 @@
+export declare const BaseUrl: {
+    PRODUCTION: {
+        PG_HOST_URL: string;
+        OAUTH_HOST_URL: string;
+        EVENTS_HOST_URL: string;
+    };
+    SANDBOX: {
+        PG_HOST_URL: string;
+        OAUTH_HOST_URL: string;
+        EVENTS_HOST_URL: string;
+    };
+};

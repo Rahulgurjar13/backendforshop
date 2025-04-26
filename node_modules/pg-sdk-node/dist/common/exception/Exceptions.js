@@ -1,0 +1,87 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.ServerError = exports.TooManyRequests = exports.ExpectationFailed = exports.ResourceInvalid = exports.ResourceGone = exports.ResourceConflict = exports.ResourceNotFound = exports.ForbiddenAccess = exports.UnauthorizedAccess = exports.BadRequest = exports.ClientError = exports.PhonePeException = void 0;
+const PhonePeResponse_1 = require("../http/PhonePeResponse");
+const class_transformer_1 = require("class-transformer");
+class PhonePeException extends Error {
+    constructor(message, httpStatusCode, error) {
+        var _a;
+        super(message);
+        this.type = this.constructor.name;
+        this.message = message;
+        this.httpStatusCode = httpStatusCode;
+        if (error != null) {
+            const phonePeResponse = (0, class_transformer_1.plainToClass)(PhonePeResponse_1.PhonePeResponse, (_a = error.data) !== null && _a !== void 0 ? _a : {});
+            this.code = phonePeResponse.errorCode || phonePeResponse.code;
+            this.data = phonePeResponse.context || phonePeResponse.data;
+            this.message = phonePeResponse.message || message;
+        }
+    }
+}
+exports.PhonePeException = PhonePeException;
+class ClientError extends PhonePeException {
+    constructor(message, httpStatusCode, error) {
+        super(message, httpStatusCode, error);
+    }
+}
+exports.ClientError = ClientError;
+class BadRequest extends ClientError {
+    constructor(message, httpStatusCode, error) {
+        super(message, httpStatusCode, error);
+    }
+}
+exports.BadRequest = BadRequest;
+class UnauthorizedAccess extends ClientError {
+    constructor(message, httpStatusCode, error) {
+        super(message, httpStatusCode, error);
+    }
+}
+exports.UnauthorizedAccess = UnauthorizedAccess;
+class ForbiddenAccess extends ClientError {
+    constructor(message, httpStatusCode, error) {
+        super(message, httpStatusCode, error);
+    }
+}
+exports.ForbiddenAccess = ForbiddenAccess;
+class ResourceNotFound extends ClientError {
+    constructor(message, httpStatusCode, error) {
+        super(message, httpStatusCode, error);
+    }
+}
+exports.ResourceNotFound = ResourceNotFound;
+class ResourceConflict extends ClientError {
+    constructor(message, httpStatusCode, error) {
+        super(message, httpStatusCode, error);
+    }
+}
+exports.ResourceConflict = ResourceConflict;
+class ResourceGone extends ClientError {
+    constructor(message, httpStatusCode, error) {
+        super(message, httpStatusCode, error);
+    }
+}
+exports.ResourceGone = ResourceGone;
+class ResourceInvalid extends ClientError {
+    constructor(message, httpStatusCode, error) {
+        super(message, httpStatusCode, error);
+    }
+}
+exports.ResourceInvalid = ResourceInvalid;
+class ExpectationFailed extends ClientError {
+    constructor(message, httpStatusCode, error) {
+        super(message, httpStatusCode, error);
+    }
+}
+exports.ExpectationFailed = ExpectationFailed;
+class TooManyRequests extends ClientError {
+    constructor(message, httpStatusCode, error) {
+        super(message, httpStatusCode, error);
+    }
+}
+exports.TooManyRequests = TooManyRequests;
+class ServerError extends PhonePeException {
+    constructor(message, httpStatusCode, error) {
+        super(message, httpStatusCode, error);
+    }
+}
+exports.ServerError = ServerError;

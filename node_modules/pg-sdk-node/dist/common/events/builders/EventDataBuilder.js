@@ -1,0 +1,100 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.EventDataBuilder = void 0;
+const EventData_1 = require("../models/EventData");
+class EventDataBuilder {
+    constructor() {
+        this.setFlowType = (flowType) => {
+            this.flowType = flowType;
+            return this;
+        };
+        this.setPaymentFlow = (paymentFlow) => {
+            this.paymentFlow = paymentFlow;
+            return this;
+        };
+        this.setSdkType = (sdkType) => {
+            this.sdkType = sdkType;
+            return this;
+        };
+        this.setSdkVersion = (sdkVersion) => {
+            this.sdkVersion = sdkVersion;
+            return this;
+        };
+        this.setApiPath = (apiPath) => {
+            this.apiPath = apiPath;
+            return this;
+        };
+        this.setAmount = (amount) => {
+            this.amount = amount;
+            return this;
+        };
+        this.setTargetApp = (targetApp) => {
+            this.targetApp = targetApp;
+            return this;
+        };
+        this.setDeviceContext = (deviceContext) => {
+            this.deviceContext = deviceContext;
+            return this;
+        };
+        this.setExpireAfter = (expireAfter) => {
+            this.expireAfter = expireAfter;
+            return this;
+        };
+        this.setMerchantRefundId = (merchantRefundId) => {
+            this.merchantRefundId = merchantRefundId;
+            return this;
+        };
+        this.setOriginalMerchantOrderId = (originalMerchantOrderId) => {
+            this.originalMerchantOrderId = originalMerchantOrderId;
+            return this;
+        };
+        this.setTransactionId = (transactionId) => {
+            this.transactionId = transactionId;
+            return this;
+        };
+        this.setEventState = (eventState) => {
+            this.eventState = eventState;
+            return this;
+        };
+        this.setPaymentInstrument = (paymentInstrument) => {
+            this.paymentInstrument = paymentInstrument;
+            return this;
+        };
+        this.setCachedTokenIssuesAt = (cachedTokenIssuedAt) => {
+            this.cachedTokenIssuedAt = cachedTokenIssuedAt;
+            return this;
+        };
+        this.setCachedTokenExpiresAt = (cachedTokenExpiresAt) => {
+            this.cachedTokenExpiresAt = cachedTokenExpiresAt;
+            return this;
+        };
+        this.setTokenFetchAttemptTimestamp = (tokenFetchAttemptTimestamp) => {
+            this.tokenFetchAttemptTimestamp = tokenFetchAttemptTimestamp;
+            return this;
+        };
+        this.setExceptionClass = (exceptionClass) => {
+            this.exceptionClass = exceptionClass;
+            return this;
+        };
+        this.setExceptionMessage = (exceptionMessage) => {
+            this.exceptionMessage = exceptionMessage;
+            return this;
+        };
+        this.setExceptionCode = (exceptionCode) => {
+            this.exceptionCode = exceptionCode;
+            return this;
+        };
+        this.setExceptionHttpStatusCode = (exceptionHttpStatusCode) => {
+            this.exceptionHttpStatusCode = exceptionHttpStatusCode;
+            return this;
+        };
+        this.setExceptionData = (exceptionData) => {
+            this.exceptionData = exceptionData;
+            return this;
+        };
+        this.build = () => {
+            return new EventData_1.EventData(this);
+        };
+    }
+}
+exports.EventDataBuilder = EventDataBuilder;

@@ -1,167 +1,94 @@
 const mongoose = require('mongoose');
 
 const orderSchema = new mongoose.Schema({
-  orderId: { 
-    type: String, 
-    unique: true, 
+  orderId: {
+    type: String,
+    unique: true,
     required: true,
-    trim: true 
+    trim: true,
   },
   customer: {
-    firstName: { 
-      type: String, 
-      required: true, 
-      trim: true 
+    firstName: { type: String, required: true, trim: true },
+    lastName: { type: String, required: true, trim: true },
+    email: {
+      type: String,
+      required: true,
+      lowercase: true,
+      trim: true,
+      match: [/^[^\s@]+@[^\s@]+\.[^\s@]+$/, 'Invalid email format'],
     },
-    lastName: { 
-      type: String, 
-      required: true, 
-      trim: true 
-    },
-    email: { 
-      type: String, 
-      required: true, 
-      lowercase: true, 
-      trim: true, 
-      match: [/^[^\s@]+@[^\s@]+\.[^\s@]+$/, 'Invalid email format'] 
-    },
-    phone: { 
-      type: String, 
-      required: true, 
-      trim: true, 
-      match: [/^[0-9]{10}$/, 'Invalid phone number (must be 10 digits)'] 
+    phone: {
+      type: String,
+      required: true,
+      trim: true,
+      match: [/^[0-9]{10}$/, 'Invalid phone number (must be 10 digits)'],
     },
   },
   shippingAddress: {
-    address1: { 
-      type: String, 
-      required: true, 
-      trim: true 
+    address1: { type: String, required: true, trim: true },
+    address2: { type: String, trim: true },
+    city: { type: String, required: true, trim: true },
+    state: { type: String, required: true, trim: true },
+    pincode: {
+      type: String,
+      required: true,
+      trim: true,
+      match: [/^[0-9]{6}$/, 'Invalid pincode (must be 6 digits)'],
     },
-    address2: { 
-      type: String, 
-      trim: true 
-    },
-    city: { 
-      type: String, 
-      required: true, 
-      trim: true 
-    },
-    state: { 
-      type: String, 
-      required: true, 
-      trim: true 
-    },
-    pincode: { 
-      type: String, 
-      required: true, 
-      trim: true, 
-      match: [/^[0-9]{6}$/, 'Invalid pincode (must be 6 digits)'] 
-    },
-    country: { 
-      type: String, 
-      default: 'India', 
-      trim: true 
-    },
+    country: { type: String, default: 'India', trim: true },
   },
   shippingMethod: {
-    type: { 
-      type: String, 
-      required: true, 
-      enum: ['Standard', 'Express'], 
-      default: 'Standard' 
+    type: {
+      type: String,
+      required: true,
+      enum: ['Standard', 'Express'],
+      default: 'Standard',
     },
-    cost: { 
-      type: Number, 
-      required: true, 
-      min: [0, 'Shipping cost cannot be negative'] 
+    cost: {
+      type: Number,
+      required: true,
+      min: [0, 'Shipping cost cannot be negative'],
     },
   },
   coupon: {
-    code: { 
-      type: String, 
-      default: '', 
-      trim: true 
-    },
-    discount: { 
-      type: Number, 
-      default: 0, 
-      min: [0, 'Discount cannot be negative'] 
-    },
+    code: { type: String, default: '', trim: true },
+    discount: { type: Number, default: 0, min: [0, 'Discount cannot be negative'] },
   },
   gstDetails: {
-    gstNumber: { 
-      type: String, 
-      trim: true 
-    },
-    state: { 
-      type: String, 
-      trim: true 
-    },
-    city: { 
-      type: String, 
-      trim: true 
-    },
+    gstNumber: { type: String, trim: true },
+    state: { type: String, trim: true },
+    city: { type: String, trim: true },
   },
-  paymentMethod: { 
-    type: String, 
-    required: true, 
-    enum: ['PhonePe', 'COD'], 
-    default: 'COD' 
+  paymentMethod: {
+    type: String,
+    required: true,
+    enum: ['PhonePe', 'COD'],
+    default: 'COD',
   },
-  phonepeTransactionId: { 
-    type: String, 
-    sparse: true, 
-    unique: true, 
-    trim: true 
+  phonepeTransactionId: {
+    type: String,
+    sparse: true,
+    unique: true,
+    trim: true,
   },
-  paymentStatus: { 
-    type: String, 
-    required: true, 
-    enum: ['Pending', 'Paid', 'Failed'], 
-    default: 'Pending' 
+  paymentStatus: {
+    type: String,
+    required: true,
+    enum: ['Pending', 'Paid', 'Failed'],
+    default: 'Pending',
   },
   items: [
     {
-      productId: { 
-        type: String, 
-        required: true, 
-        trim: true 
-      },
-      name: { 
-        type: String, 
-        required: true, 
-        trim: true 
-      },
-      quantity: { 
-        type: Number, 
-        required: true, 
-        min: [1, 'Quantity must be at least 1'] 
-      },
-      price: { 
-        type: Number, 
-        required: true, 
-        min: [0, 'Price cannot be negative'] 
-      },
-      variant: { 
-        type: String, 
-        trim: true 
-      },
+      productId: { type: String, required: true, trim: true },
+      name: { type: String, required: true, trim: true },
+      quantity: { type: Number, required: true, min: [1, 'Quantity must be at least 1'] },
+      price: { type: Number, required: true, min: [0, 'Price cannot be negative'] },
+      variant: { type: String, trim: true },
     },
   ],
-  date: { 
-    type: Date, 
-    default: Date.now 
-  },
-  total: { 
-    type: Number, 
-    required: true, 
-    min: [0, 'Total cannot be negative'] 
-  },
-  updatedAt: { 
-    type: Date, 
-    default: Date.now 
-  },
+  date: { type: Date, default: Date.now },
+  total: { type: Number, required: true, min: [0, 'Total cannot be negative'] },
+  updatedAt: { type: Date, default: Date.now },
 });
 
 // Update `updatedAt` on every save
@@ -179,5 +106,8 @@ orderSchema.pre('validate', function (next) {
   }
   next();
 });
+
+// Index for efficient querying (only for date, as unique fields already have indexes)
+orderSchema.index({ date: -1 });
 
 module.exports = mongoose.model('Order', orderSchema);
