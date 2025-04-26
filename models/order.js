@@ -29,9 +29,8 @@ const orderSchema = new mongoose.Schema({
     state: { type: String },
     city: { type: String },
   },
-  paymentMethod: { type: String, required: true, enum: ['Razorpay', 'COD'] }, // Supports only Razorpay and COD
-  razorpayPaymentId: { type: String }, // For Razorpay payments
-  razorpayOrderId: { type: String }, // Razorpay order ID
+  paymentMethod: { type: String, required: true, enum: ['PhonePe', 'COD'] }, // Supports only PhonePe and COD
+  phonepeTransactionId: { type: String }, // For PhonePe transaction ID (merchantTransactionId)
   paymentStatus: { type: String, default: 'Pending', enum: ['Pending', 'Paid', 'Failed'] },
   items: [
     {
@@ -47,8 +46,8 @@ const orderSchema = new mongoose.Schema({
   updatedAt: { type: Date, default: Date.now }, // Tracks updates
 });
 
-// Add index for razorpayOrderId (no duplicate for orderId)
-orderSchema.index({ razorpayOrderId: 1 });
+// Add index for phonepeTransactionId (no duplicate for orderId)
+orderSchema.index({ phonepeTransactionId: 1 });
 
 // Update `updatedAt` on every save
 orderSchema.pre('save', function (next) {
