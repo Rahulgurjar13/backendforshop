@@ -3,6 +3,7 @@ const router = express.Router();
 const Order = require('../models/order');
 const crypto = require('crypto');
 const axios = require('axios');
+const dns = require('dns').promises; // For DNS resolution check
 const { authenticateAdmin } = require('../middleware/authenticateAdmin');
 
 // PhonePe API configuration
@@ -15,13 +16,16 @@ const PHONEPE_API_URL =
     : 'https://api-testing.phonepe.com/apis/hermes';
 
 // Retry utility for API calls
-const withRetry = async (fn, retries = 3, delay = 1000) => {
+const withRetry = async (fn, retries = 4, delay = 1000) => {
   for (let i = 0; i < retries; i++) {
     try {
       return await fn();
     } catch (error) {
       if (i === retries - 1) throw error;
-      console.warn(`Retry ${i + 1}/${retries} failed:`, error.message);
+      console.warn(`Retry ${i + 1}/${retries} failed:`, {
+        message: error.message,
+        code: error.code,
+      });
       await new Promise((resolve) => setTimeout(resolve, delay * Math.pow(2, i)));
     }
   }
@@ -116,6 +120,20 @@ router.post('/initiate-phonepe-payment', async (req, res) => {
       return res.status(500).json({ error: 'Server configuration error' });
     }
 
+    // Validate credential format
+    if (!/^[A-Za-z0-9]+$/.test(PHONEPE_MERCHANT_ID)) {
+      console.error('Invalid PHONEPE_MERCHANT_ID format:', PHONEPE_MERCHANT_ID);
+      return res.status(500).json({ error: 'Invalid merchant ID format' });
+    }
+    if (!/^[0-9a-f-]{36}$/.test(PHONEPE_SALT_KEY)) {
+      console.error('Invalid PHONEPE_SALT_KEY format:', PHONEPE_SALT_KEY);
+      return res.status(500).json({ error: 'Invalid salt key format' });
+    }
+    if (!/^\d+$/.test(PHONEPE_SALT_INDEX)) {
+      console.error('Invalid PHONEPE_SALT_INDEX format:', PHONEPE_SALT_INDEX);
+      return res.status(500).json({ error: 'Invalid salt index format' });
+    }
+
     // Find order
     const order = await Order.findOne({ orderId });
     if (!order) {
@@ -162,6 +180,17 @@ router.post('/initiate-phonepe-payment', async (req, res) => {
 
     console.log('Checksum Details:', { base64Payload, stringToHash, checksum });
 
+    // Check DNS resolution for PhonePe API
+    try {
+      const addresses = await dns.lookup('api-testing.phonepe.com');
+      console.log('DNS Resolution for api-testing.phonepe.com:', addresses);
+    } catch (dnsError) {
+      console.error('DNS Resolution Error:', {
+        message: dnsError.message,
+        code: dnsError.code,
+      });
+    }
+
     // Make PhonePe API request with retry
     let phonePeResponse;
     try {
@@ -175,9 +204,11 @@ router.post('/initiate-phonepe-payment', async (req, res) => {
               'X-VERIFY': checksum,
               accept: 'application/json',
             },
-            timeout: 60000, // Increased to 60 seconds
+            timeout: 90000, // Increased to 90 seconds
           }
-        )
+        ),
+        4,
+        1000
       );
     } catch (phonePeError) {
       console.error('PhonePe API Error:', {
@@ -352,6 +383,17 @@ router.post('/verify-phonepe-payment', async (req, res) => {
 
     console.log('Verification Request:', { endpoint, stringToHash, checksum });
 
+    // Check DNS resolution for PhonePe API
+    try {
+      const addresses = await dns.lookup('api-testing.phonepe.com');
+      console.log('DNS Resolution for api-testing.phonepe.com:', addresses);
+    } catch (dnsError) {
+      console.error('DNS Resolution Error:', {
+        message: dnsError.message,
+        code: dnsError.code,
+      });
+    }
+
     let response;
     try {
       response = await withRetry(() =>
@@ -362,8 +404,10 @@ router.post('/verify-phonepe-payment', async (req, res) => {
             'X-MERCHANT-ID': PHONEPE_MERCHANT_ID,
             accept: 'application/json',
           },
-          timeout: 60000, // Increased to 60 seconds
-        })
+          timeout: 90000, // Increased to 90 seconds
+        }),
+        4,
+        1000
       );
     } catch (phonePeError) {
       console.error('PhonePe Verification Error:', {
@@ -425,9 +469,7 @@ router.post('/verify-phonepe-payment', async (req, res) => {
     } else {
       order.paymentStatus = 'Failed';
       await order.save();
-      console.log(
-        `Payment verification failed for order: ${orderId}, code: ${response.data.code}`
-      );
+      console.log(`Payment verification failed for order: ${orderId}, code: ${response.data.code}`);
       res.status(200).json({
         success: false,
         error: response.data.message || 'Payment verification failed',
