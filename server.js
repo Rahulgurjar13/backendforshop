@@ -19,9 +19,6 @@ const requiredEnvVars = [
   'CORS_ORIGINS',
   'BACKEND_URL',
   'FRONTEND_URL',
-  'PHONEPE_MERCHANT_ID',
-  'PHONEPE_SALT_KEY',
-  'PHONEPE_SALT_INDEX',
 ];
 const missingEnvVars = requiredEnvVars.filter((varName) => !process.env[varName]);
 const invalidEnvVars = [];
@@ -77,7 +74,6 @@ app.use(
           "'self'",
           'https://backendforshop.onrender.com',
           'https://www.nisargmaitri.in',
-          'https://api-preprod.phonepe.com',
         ],
       },
     },
@@ -94,7 +90,7 @@ app.use(
       }
     },
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-VERIFY'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
   })
 );
@@ -119,9 +115,6 @@ console.log('Environment Configuration:', {
   CORS_ORIGINS: process.env.CORS_ORIGINS,
   BACKEND_URL: process.env.BACKEND_URL,
   FRONTEND_URL: process.env.FRONTEND_URL,
-  PHONEPE_MERCHANT_ID: process.env.PHONEPE_MERCHANT_ID ? 'Set' : 'Not set',
-  PHONEPE_SALT_KEY: process.env.PHONEPE_SALT_KEY ? 'Set' : 'Not set',
-  PHONEPE_SALT_INDEX: process.env.PHONEPE_SALT_INDEX ? 'Set' : 'Not set',
 });
 
 // Authentication route: Login

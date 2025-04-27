@@ -62,7 +62,7 @@ const orderSchema = new mongoose.Schema({
   paymentMethod: {
     type: String,
     required: true,
-    enum: ['COD', 'PhonePe'], // Added PhonePe
+    enum: ['COD'], // Removed PhonePe
     default: 'COD',
   },
   paymentStatus: {
@@ -70,13 +70,6 @@ const orderSchema = new mongoose.Schema({
     required: true,
     enum: ['Pending', 'Paid', 'Failed'],
     default: 'Pending',
-  },
-  phonepeTransactionId: {
-    type: String,
-    trim: true,
-    required: function () {
-      return this.paymentMethod === 'PhonePe';
-    }, // Required only for PhonePe
   },
   items: [
     {
@@ -110,7 +103,5 @@ orderSchema.pre('validate', function (next) {
 
 // Index for efficient querying
 orderSchema.index({ date: -1 });
-orderSchema.index({ orderId: 1 });
-orderSchema.index({ phonepeTransactionId: 1 }, { sparse: true });
 
 module.exports = mongoose.model('Order', orderSchema);
