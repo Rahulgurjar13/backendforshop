@@ -14,9 +14,6 @@ const { checkAdminStatus } = require('./middleware/authenticateAdmin');
 const requiredEnvVars = [
   'MONGO_URI',
   'JWT_SECRET',
-  'PHONEPE_MERCHANT_ID',
-  'PHONEPE_SALT_KEY',
-  'PHONEPE_SALT_INDEX',
   'EMAIL_USER',
   'EMAIL_PASS',
   'CORS_ORIGINS',
@@ -26,15 +23,6 @@ const requiredEnvVars = [
 const missingEnvVars = requiredEnvVars.filter((varName) => !process.env[varName]);
 const invalidEnvVars = [];
 
-if (process.env.PHONEPE_SALT_INDEX && !/^\d+$/.test(process.env.PHONEPE_SALT_INDEX)) {
-  invalidEnvVars.push('PHONEPE_SALT_INDEX must be a number (e.g., "1")');
-}
-if (process.env.PHONEPE_MERCHANT_ID && !/^[A-Za-z0-9]+$/.test(process.env.PHONEPE_MERCHANT_ID)) {
-  invalidEnvVars.push('PHONEPE_MERCHANT_ID must be alphanumeric');
-}
-if (process.env.PHONEPE_SALT_KEY && !/^[0-9a-f-]{36}$/.test(process.env.PHONEPE_SALT_KEY)) {
-  invalidEnvVars.push('PHONEPE_SALT_KEY must be a UUID (e.g., "123e4567-e89b-12d3-a456-426614174000")');
-}
 if (process.env.CORS_ORIGINS && !process.env.CORS_ORIGINS.includes('https://www.nisargmaitri.in')) {
   invalidEnvVars.push('CORS_ORIGINS must include https://www.nisargmaitri.in');
 }
@@ -84,8 +72,6 @@ app.use(
         styleSrc: ["'self'", "'unsafe-inline'"],
         connectSrc: [
           "'self'",
-          'https://api.phonepe.com',
-          'https://api-testing.phonepe.com',
           'https://backendforshop.onrender.com',
           'https://www.nisargmaitri.in',
         ],
@@ -104,7 +90,7 @@ app.use(
       }
     },
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-VERIFY'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
   })
 );
@@ -125,9 +111,6 @@ console.log('Environment Configuration:', {
   PORT: process.env.PORT || 5001,
   MONGO_URI: process.env.MONGO_URI ? 'Set' : 'Not set',
   JWT_SECRET: process.env.JWT_SECRET ? 'Set' : 'Not set',
-  PHONEPE_MERCHANT_ID: process.env.PHONEPE_MERCHANT_ID ? 'Set' : 'Not set',
-  PHONEPE_SALT_KEY: process.env.PHONEPE_SALT_KEY ? 'Set' : 'Not set',
-  PHONEPE_SALT_INDEX: process.env.PHONEPE_SALT_INDEX ? 'Set' : 'Not set',
   EMAIL_USER: process.env.EMAIL_USER ? 'Set' : 'Not set',
   CORS_ORIGINS: process.env.CORS_ORIGINS,
   BACKEND_URL: process.env.BACKEND_URL,
