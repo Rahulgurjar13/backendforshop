@@ -62,7 +62,7 @@ const orderSchema = new mongoose.Schema({
   paymentMethod: {
     type: String,
     required: true,
-    enum: ['COD'], // Removed PhonePe
+    enum: ['COD', 'Razorpay'], // Added Razorpay
     default: 'COD',
   },
   paymentStatus: {
@@ -70,6 +70,14 @@ const orderSchema = new mongoose.Schema({
     required: true,
     enum: ['Pending', 'Paid', 'Failed'],
     default: 'Pending',
+  },
+  paymentId: { // Added for Razorpay payment ID
+    type: String,
+    trim: true,
+  },
+  razorpayOrderId: { // Added for Razorpay order ID
+    type: String,
+    trim: true,
   },
   items: [
     {

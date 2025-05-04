@@ -19,6 +19,8 @@ const requiredEnvVars = [
   'CORS_ORIGINS',
   'BACKEND_URL',
   'FRONTEND_URL',
+  'RAZORPAY_KEY_ID', // Added for Razorpay
+  'RAZORPAY_KEY_SECRET', // Added for Razorpay
 ];
 const missingEnvVars = requiredEnvVars.filter((varName) => !process.env[varName]);
 const invalidEnvVars = [];
@@ -74,6 +76,7 @@ app.use(
           "'self'",
           'https://backendforshop.onrender.com',
           'https://www.nisargmaitri.in',
+          'https://api.razorpay.com', // Added for Razorpay
         ],
       },
     },
@@ -115,6 +118,8 @@ console.log('Environment Configuration:', {
   CORS_ORIGINS: process.env.CORS_ORIGINS,
   BACKEND_URL: process.env.BACKEND_URL,
   FRONTEND_URL: process.env.FRONTEND_URL,
+  RAZORPAY_KEY_ID: process.env.RAZORPAY_KEY_ID ? 'Set' : 'Not set', // Added
+  RAZORPAY_KEY_SECRET: process.env.RAZORPAY_KEY_SECRET ? 'Set' : 'Not set', // Added
 });
 
 // Authentication route: Login
