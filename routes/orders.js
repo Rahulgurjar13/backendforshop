@@ -138,6 +138,9 @@ router.post('/verify-razorpay-payment', async (req, res) => {
 
     if (generatedSignature !== razorpay_signature) {
       console.warn(`Invalid Razorpay signature for orderId: ${orderId}`);
+      // Update order to reflect failed payment
+      order.paymentStatus = 'Failed';
+      await order.save();
       return res.status(400).json({ error: 'Invalid payment signature' });
     }
 
@@ -162,7 +165,13 @@ router.get('/', authenticateAdmin, async (req, res) => {
   try {
     const { date, orderId } = req.query;
 
-    const query = {};
+    const query = {
+      $or: [
+        { paymentMethod: 'COD', paymentStatus: 'Pending' },
+        { paymentMethod: 'Razorpay', paymentStatus: 'Paid' },
+      ],
+    };
+
     if (date) {
       if (!isValidDate(date)) {
         return res.status(400).json({ error: 'Invalid date format' });
@@ -176,6 +185,7 @@ router.get('/', authenticateAdmin, async (req, res) => {
         $lte: endOfDay,
       };
     }
+
     if (orderId) {
       if (typeof orderId !== 'string' || orderId.trim() === '') {
         return res.status(400).json({ error: 'Invalid orderId' });
