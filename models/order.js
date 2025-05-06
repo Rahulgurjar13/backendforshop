@@ -62,7 +62,7 @@ const orderSchema = new mongoose.Schema({
   paymentMethod: {
     type: String,
     required: true,
-    enum: ['COD', 'Razorpay'], // Added Razorpay
+    enum: ['COD', 'Razorpay'],
     default: 'COD',
   },
   paymentStatus: {
@@ -71,11 +71,11 @@ const orderSchema = new mongoose.Schema({
     enum: ['Pending', 'Paid', 'Failed'],
     default: 'Pending',
   },
-  paymentId: { // Added for Razorpay payment ID
+  paymentId: {
     type: String,
     trim: true,
   },
-  razorpayOrderId: { // Added for Razorpay order ID
+  razorpayOrderId: {
     type: String,
     trim: true,
   },
@@ -93,23 +93,60 @@ const orderSchema = new mongoose.Schema({
   updatedAt: { type: Date, default: Date.now },
 });
 
-// Update `updatedAt` on every save
+// Update `updatedAt` on every save and log changes
 orderSchema.pre('save', function (next) {
   this.updatedAt = new Date();
-  next();
-});
-
-// Validate total matches items, shipping cost, and coupon discount
-orderSchema.pre('validate', function (next) {
-  const itemsTotal = this.items.reduce((sum, item) => sum + item.price * item.quantity, 0);
-  const expectedTotal = itemsTotal + this.shippingMethod.cost - (this.coupon.discount || 0);
-  if (Math.abs(this.total - expectedTotal) > 0.01) {
-    next(new Error('Total does not match items total plus shipping minus discount'));
+  if (this.isModified('paymentStatus') || this.isModified('paymentId') || this.isModified('razorpayOrderId')) {
+    console.log(`Order ${this.orderId} updated:`, {
+      paymentStatus: this.paymentStatus,
+      paymentId: this.paymentId,
+      razorpayOrderId: this.razorpayOrderId,
+      updatedAt: this.updatedAt,
+    });
   }
   next();
 });
 
-// Index for efficient querying
+// Validate total matches items, shipping cost, and coupon discount only for new documents or when relevant fields are modified
+orderSchema.pre('validate', function (next) {
+  // Skip validation for updates unless items, shippingMethod, coupon, or total are modified
+  if (!this.isNew) {
+    const modifiedFields = this.modifiedPaths();
+    if (
+      !modifiedFields.includes('items') &&
+      !modifiedFields.includes('shippingMethod') &&
+      !modifiedFields.includes('coupon') &&
+      !modifiedFields.includes('total')
+    ) {
+      return next();
+    }
+  }
+
+  const itemsTotal = this.items.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const expectedTotal = itemsTotal + this.shippingMethod.cost - (this.coupon.discount || 0);
+  console.log(`Order ${this.orderId} total validation:`, {
+    itemsTotal,
+    shippingCost: this.shippingMethod.cost,
+    couponDiscount: this.coupon.discount,
+    expectedTotal,
+    providedTotal: this.total,
+  }); // Debug log
+  if (Math.abs(this.total - expectedTotal) > 0.01) {
+    return next(new Error('Total does not match items total plus shipping minus discount'));
+  }
+  next();
+});
+
+// Custom validation for paymentId when paymentStatus is 'Paid' for Razorpay orders
+orderSchema.pre('validate', function (next) {
+  if (this.paymentMethod === 'Razorpay' && this.paymentStatus === 'Paid' && !this.paymentId) {
+    return next(new Error('paymentId is required for Razorpay orders with paymentStatus "Paid"'));
+  }
+  next();
+});
+
+// Indexes for efficient querying
 orderSchema.index({ date: -1 });
+orderSchema.index({ paymentMethod: 1, paymentStatus: 1 });
 
 module.exports = mongoose.model('Order', orderSchema);

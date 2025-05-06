@@ -4,6 +4,7 @@ const Razorpay = require('razorpay');
 const crypto = require('crypto');
 const Order = require('../models/order');
 const { authenticateAdmin } = require('../middleware/authenticateAdmin');
+const { v4: uuidv4 } = require('uuid');
 
 // Initialize Razorpay
 const razorpay = new Razorpay({
@@ -20,12 +21,15 @@ router.post('/', async (req, res) => {
     if (
       !orderData.customer ||
       !orderData.shippingAddress ||
+      !orderData.shippingMethod ||
       !orderData.items ||
-      !orderData.total ||
+      !Array.isArray(orderData.items) ||
+      orderData.items.length === 0 ||
+      orderData.total == null ||
       !orderData.paymentMethod
     ) {
-      console.warn('Missing required fields:', Object.keys(orderData));
-      return res.status(400).json({ error: 'Missing required fields' });
+      console.warn('Missing or invalid required fields:', Object.keys(orderData));
+      return res.status(400).json({ error: 'Missing or invalid required fields' });
     }
 
     // Validate payment method
@@ -37,14 +41,47 @@ router.post('/', async (req, res) => {
       });
     }
 
+    // Validate items
+    for (const item of orderData.items) {
+      if (
+        !item.productId ||
+        !item.name ||
+        !item.quantity ||
+        item.quantity < 1 ||
+        item.price == null ||
+        item.price < 0
+      ) {
+        console.warn('Invalid item data:', item);
+        return res.status(400).json({ error: 'Invalid item data: missing or invalid productId, name, quantity, or price' });
+      }
+    }
+
     // Generate unique orderId
-    const orderId = `ORDER-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    const orderId = `ORDER-${uuidv4().slice(0, 8).toUpperCase()}`;
+
+    // Log items and calculated total for debugging
+    const itemsTotal = orderData.items.reduce((sum, item) => sum + item.price * item.quantity, 0);
+    const shippingCost = orderData.shippingMethod.cost || 0;
+    const couponDiscount = orderData.coupon?.discount || 0;
+    const expectedTotal = itemsTotal + shippingCost - couponDiscount;
+
+    console.log(`Creating order ${orderId}:`, {
+      itemsTotal,
+      shippingCost,
+      couponDiscount,
+      expectedTotal,
+      providedTotal: orderData.total,
+      items: orderData.items,
+    });
 
     // Create order in MongoDB
     const order = new Order({
       ...orderData,
       orderId,
       paymentStatus: 'Pending',
+      date: new Date(),
+      coupon: orderData.coupon || { code: '', discount: 0 }, // Ensure coupon is always present
+      gstDetails: orderData.gstDetails || { gstNumber: '', state: '', city: '' }, // Ensure gstDetails is always present
     });
 
     await order.save();
@@ -55,12 +92,14 @@ router.post('/', async (req, res) => {
     console.error('Error creating order:', {
       message: error.message,
       stack: error.stack,
+      details: error.errors,
     });
     if (error.code === 11000) {
       return res.status(400).json({ error: 'Duplicate order ID' });
     }
     if (error.name === 'ValidationError') {
-      return res.status(400).json({ error: 'Validation error', details: error.errors });
+      const details = Object.values(error.errors).map((err) => err.message).join('; ');
+      return res.status(400).json({ error: 'Validation error', details });
     }
     res.status(500).json({ error: 'Failed to create order', details: error.message });
   }
@@ -82,6 +121,12 @@ router.post('/initiate-razorpay-payment', async (req, res) => {
     if (!order) {
       console.warn(`Order not found: ${orderId}`);
       return res.status(404).json({ error: 'Order not found' });
+    }
+
+    // Validate amount
+    if (Math.abs(order.total * 100 - amount) > 1) {
+      console.warn(`Amount mismatch for orderId: ${orderId}`, { orderTotal: order.total, providedAmount: amount / 100 });
+      return res.status(400).json({ error: 'Amount does not match order total' });
     }
 
     // Create Razorpay order
@@ -138,7 +183,6 @@ router.post('/verify-razorpay-payment', async (req, res) => {
 
     if (generatedSignature !== razorpay_signature) {
       console.warn(`Invalid Razorpay signature for orderId: ${orderId}`);
-      // Update order to reflect failed payment
       order.paymentStatus = 'Failed';
       await order.save();
       return res.status(400).json({ error: 'Invalid payment signature' });
