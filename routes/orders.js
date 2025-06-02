@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const Razorpay = require('razorpay');
 const crypto = require('crypto');
-const Order = require('../models/Order.js');
+const Order = require('../models/order.js');
 const { authenticateAdmin } = require('../middleware/authenticateAdmin');
 
 // Initialize Razorpay
