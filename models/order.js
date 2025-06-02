@@ -74,23 +74,42 @@ const orderSchema = new mongoose.Schema({
   paymentId: {
     type: String,
     trim: true,
+    required: [
+      function () {
+        return this.paymentMethod === 'Razorpay' && this.paymentStatus === 'Paid';
+      },
+      'Payment ID is required for paid Razorpay orders',
+    ],
   },
   razorpayOrderId: {
     type: String,
     trim: true,
+    required: [
+      function () {
+        return this.paymentMethod === 'Razorpay' && this.paymentStatus === 'Paid';
+      },
+      'Razorpay Order ID is required for paid Razorpay orders',
+    ],
   },
-  items: [
-    {
-      productId: { type: String, required: true, trim: true },
-      name: { type: String, required: true, trim: true },
-      quantity: { type: Number, required: true, min: [1, 'Quantity must be at least 1'] },
-      price: { type: Number, required: true, min: [0, 'Price cannot be negative'] },
-      variant: { type: String, trim: true },
+  items: {
+    type: [
+      {
+        productId: { type: String, required: true, trim: true },
+        name: { type: String, required: true, trim: true },
+        quantity: { type: Number, required: true, min: [1, 'Quantity must be at least 1'] },
+        price: { type: Number, required: true, min: [0, 'Price cannot be negative'] },
+        variant: { type: String, trim: true },
+      },
+    ],
+    validate: {
+      validator: (items) => items && items.length > 0,
+      message: 'At least one item is required in the order',
     },
-  ],
+  },
   date: { type: Date, default: Date.now },
   total: { type: Number, required: true, min: [0, 'Total cannot be negative'] },
   updatedAt: { type: Date, default: Date.now },
+  emailSent: { type: Boolean, default: false }, // New field to track email status
 });
 
 orderSchema.pre('save', function (next) {
@@ -99,14 +118,22 @@ orderSchema.pre('save', function (next) {
 });
 
 orderSchema.pre('validate', function (next) {
+  // Validate total
   const itemsTotal = this.items.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const expectedTotal = itemsTotal + this.shippingMethod.cost - (this.coupon.discount || 0);
   if (Math.abs(this.total - expectedTotal) > 0.01) {
-    next(new Error('Total does not match items total plus shipping minus discount'));
+    return next(new Error('Total does not match items total plus shipping minus discount'));
   }
+
+  // Ensure emailSent is not reset for Paid orders
+  if (this.isModified('paymentStatus') && this.paymentStatus === 'Paid' && this.emailSent) {
+    this.emailSent = true;
+  }
+
   next();
 });
 
 orderSchema.index({ date: -1 });
+orderSchema.index({ orderId: 1 });
 
 module.exports = mongoose.model('Order', orderSchema);

@@ -5,9 +5,9 @@ const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
-const cron = require('node-cron'); // Added for cron job
+const cron = require('node-cron');
 const User = require('./models/User');
-const Order = require('./models/order.js'); // Added for cleanup
+const Order = require('./models/order.js');
 const orderRoutes = require('./routes/orders.js');
 const contactRoutes = require('./routes/contact');
 const { checkAdminStatus } = require('./middleware/authenticateAdmin');
@@ -23,22 +23,18 @@ const requiredEnvVars = [
   'FRONTEND_URL',
   'RAZORPAY_KEY_ID',
   'RAZORPAY_KEY_SECRET',
+  'RAZORPAY_WEBHOOK_SECRET',
 ];
 const missingEnvVars = requiredEnvVars.filter((varName) => !process.env[varName]);
-const invalidEnvVars = [];
-
-if (process.env.CORS_ORIGINS && !process.env.CORS_ORIGINS.includes('https://www.nisargmaitri.in')) {
-  invalidEnvVars.push('CORS_ORIGINS must include https://www.nisargmaitri.in');
+if (missingEnvVars.length > 0) {
+  console.error(`❌ Missing environment variables: ${missingEnvVars.join(', ')}`);
+  process.exit(1);
 }
 
-if (missingEnvVars.length > 0 || invalidEnvVars.length > 0) {
-  console.error(`❌ Environment variable errors:`);
-  if (missingEnvVars.length > 0) {
-    console.error(`  Missing: ${missingEnvVars.join(', ')}`);
-  }
-  if (invalidEnvVars.length > 0) {
-    console.error(`  Invalid: ${invalidEnvVars.join('; ')}`);
-  }
+// Validate CORS_ORIGINS
+const allowedOrigins = process.env.CORS_ORIGINS.split(',').map((o) => o.trim());
+if (!allowedOrigins.includes('https://www.nisargmaitri.in')) {
+  console.error('❌ CORS_ORIGINS must include https://www.nisargmaitri.in');
   process.exit(1);
 }
 
@@ -53,9 +49,7 @@ const limiter = rateLimit({
   message: 'Too many requests from this IP, please try again later.',
   keyGenerator: (req) => req.ip,
   handler: (req, res) => {
-    console.warn(
-      `Rate limit exceeded for IP: ${req.ip}. Requests: ${req.rateLimit.current}/${req.rateLimit.limit}`
-    );
+    console.warn(`Rate limit exceeded for IP: ${req.ip}`);
     res.status(429).json({
       error: 'Too many requests',
       retryAfter: Math.ceil((req.rateLimit.resetTime - Date.now()) / 1000),
@@ -86,14 +80,7 @@ app.use(
 );
 app.use(
   cors({
-    origin: (origin, callback) => {
-      const allowedOrigins = process.env.CORS_ORIGINS.split(',').map((o) => o.trim());
-      if (!origin || allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        callback(new Error('Not allowed by CORS'));
-      }
-    },
+    origin: allowedOrigins,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
@@ -105,7 +92,7 @@ app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`, {
     ip: req.ip,
     headers: req.headers,
-    body: req.body,
+    body: req.method === 'POST' ? req.body : undefined,
   });
   next();
 });
@@ -117,11 +104,13 @@ console.log('Environment Configuration:', {
   MONGO_URI: process.env.MONGO_URI ? 'Set' : 'Not set',
   JWT_SECRET: process.env.JWT_SECRET ? 'Set' : 'Not set',
   EMAIL_USER: process.env.EMAIL_USER ? 'Set' : 'Not set',
+  EMAIL_PASS: process.env.EMAIL_PASS ? 'Set' : 'Not set',
   CORS_ORIGINS: process.env.CORS_ORIGINS,
   BACKEND_URL: process.env.BACKEND_URL,
   FRONTEND_URL: process.env.FRONTEND_URL,
   RAZORPAY_KEY_ID: process.env.RAZORPAY_KEY_ID ? 'Set' : 'Not set',
   RAZORPAY_KEY_SECRET: process.env.RAZORPAY_KEY_SECRET ? 'Set' : 'Not set',
+  RAZORPAY_WEBHOOK_SECRET: process.env.RAZORPAY_WEBHOOK_SECRET ? 'Set' : 'Not set',
 });
 
 // Authentication route: Login
@@ -129,7 +118,7 @@ app.post('/api/auth/login', async (req, res) => {
   const { email, password } = req.body;
 
   if (!email || !password) {
-    console.warn('Missing login credentials:', { email, password: password ? 'Provided' : 'Missing' });
+    console.warn('Missing login credentials');
     return res.status(400).json({ error: 'Email and password are required' });
   }
 
@@ -148,10 +137,7 @@ app.post('/api/auth/login', async (req, res) => {
     console.log(`Login successful for: ${user.email}`);
     res.status(200).json({ token, isAdmin: user.isAdmin, email: user.email });
   } catch (error) {
-    console.error('Login error:', {
-      message: error.message,
-      stack: error.stack,
-    });
+    console.error('Login error:', error.message);
     res.status(500).json({ error: 'Login failed', details: error.message });
   }
 });
@@ -174,19 +160,19 @@ app.get('/health', (req, res) => {
 });
 
 // Schedule cleanup of old pending orders
-cron.schedule('*/15 * * * *', async () => {
+cron.schedule('0 0 * * *', async () => {
   try {
     const result = await Order.deleteMany({
-      paymentStatus: 'Pending',
-      createdAt: { $lt: new Date(Date.now() - 15 * 60 * 1000) },
+      paymentStatus: { $in: ['Pending', 'Failed'] },
+      createdAt: { $lt: new Date(Date.now() - 24 * 60 * 60 * 1000) },
     });
-    console.log(`Cleaned up ${result.deletedCount} old pending orders`);
+    console.log(`Cleaned up ${result.deletedCount} old pending/failed orders`);
   } catch (error) {
     console.error('Error cleaning up pending orders:', error.message);
   }
 });
 
-// MongoDB Connection with exponential backoff
+// MongoDB Connection
 const connectDB = async (retries = 5, delay = 5000) => {
   try {
     await mongoose.connect(process.env.MONGO_URI, {
@@ -194,9 +180,7 @@ const connectDB = async (retries = 5, delay = 5000) => {
       connectTimeoutMS: 10000,
       socketTimeoutMS: 45000,
     });
-    console.log(
-      `✅ MongoDB connected to ${process.env.MONGO_URI.replace(/\/\/.*@/, '//[credentials]@')}`
-    );
+    console.log(`✅ MongoDB connected`);
   } catch (err) {
     console.error('❌ MongoDB connection error:', err.message);
     if (retries > 0) {
@@ -218,18 +202,12 @@ const server = app.listen(PORT, () => {
 
 // Handle uncaught exceptions and rejections
 process.on('uncaughtException', (err) => {
-  console.error('Uncaught Exception:', {
-    message: err.message,
-    stack: err.stack,
-  });
+  console.error('Uncaught Exception:', err.message);
   server.close(() => process.exit(1));
 });
 
 process.on('unhandledRejection', (err) => {
-  console.error('Unhandled Rejection:', {
-    message: err.message,
-    stack: err.stack,
-  });
+  console.error('Unhandled Rejection:', err.message);
   server.close(() => process.exit(1));
 });
 
