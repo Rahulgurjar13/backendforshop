@@ -7,8 +7,8 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const cron = require('node-cron'); // Added for cron job
 const User = require('./models/User');
-const Order = require('./models/Order'); // Added for cleanup
-const orderRoutes = require('./routes/Orders.js');
+const Order = require('./models/Order.js'); // Added for cleanup
+const orderRoutes = require('./routes/orders.js');
 const contactRoutes = require('./routes/contact');
 const { checkAdminStatus } = require('./middleware/authenticateAdmin');
 
