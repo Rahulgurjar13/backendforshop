@@ -7,8 +7,8 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const cron = require('node-cron');
 const User = require('./models/User');
-const Order = require('./models/order.js');
-const orderRoutes = require('./routes/orders.js');
+const Order = require('./models/order');
+const orderRoutes = require('./routes/orders');
 const contactRoutes = require('./routes/contact');
 const { checkAdminStatus } = require('./middleware/authenticateAdmin');
 
@@ -27,7 +27,13 @@ const requiredEnvVars = [
 ];
 const missingEnvVars = requiredEnvVars.filter((varName) => !process.env[varName]);
 if (missingEnvVars.length > 0) {
-  console.error(`❌ Missing environment variables: ${missingEnvVars.join(', ')}`);
+  console.error(`❌ Missing environment variables: ${missingEnvVars.join(', ')}. Please check your .env file.`);
+  process.exit(1);
+}
+
+// Validate MONGO_URI format
+if (!process.env.MONGO_URI.startsWith('mongodb://') && !process.env.MONGO_URI.startsWith('mongodb+srv://')) {
+  console.error('❌ Invalid MONGO_URI format. Must start with mongodb:// or mongodb+srv://');
   process.exit(1);
 }
 
@@ -80,7 +86,13 @@ app.use(
 );
 app.use(
   cors({
-    origin: allowedOrigins,
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
@@ -124,7 +136,7 @@ app.post('/api/auth/login', async (req, res) => {
 
   try {
     const user = await User.findOne({ email: email.toLowerCase() });
-    if (!user || password !== user.password) {
+    if (!user || !(await user.comparePassword(password))) {
       console.log(`Login failed for: ${email}`);
       return res.status(401).json({ error: 'Invalid email or password' });
     }
@@ -137,7 +149,7 @@ app.post('/api/auth/login', async (req, res) => {
     console.log(`Login successful for: ${user.email}`);
     res.status(200).json({ token, isAdmin: user.isAdmin, email: user.email });
   } catch (error) {
-    console.error('Login error:', error.message);
+    console.error('Login error:', { message: error.message, stack: error.stack });
     res.status(500).json({ error: 'Login failed', details: error.message });
   }
 });
@@ -168,30 +180,51 @@ cron.schedule('0 0 * * *', async () => {
     });
     console.log(`Cleaned up ${result.deletedCount} old pending/failed orders`);
   } catch (error) {
-    console.error('Error cleaning up pending orders:', error.message);
+    console.error('Error cleaning up pending orders:', { message: error.message, stack: error.stack });
   }
 });
 
 // MongoDB Connection
 const connectDB = async (retries = 5, delay = 5000) => {
-  try {
-    await mongoose.connect(process.env.MONGO_URI, {
-      serverSelectionTimeoutMS: 5000,
-      connectTimeoutMS: 10000,
-      socketTimeoutMS: 45000,
-    });
-    console.log(`✅ MongoDB connected`);
-  } catch (err) {
-    console.error('❌ MongoDB connection error:', err.message);
-    if (retries > 0) {
-      console.log(`Retrying connection (${retries} attempts left)...`);
-      setTimeout(() => connectDB(retries - 1, delay * 2), delay);
-    } else {
-      console.error('❌ Max retries reached.');
-      process.exit(1);
+  while (retries > 0) {
+    try {
+      await mongoose.connect(process.env.MONGO_URI, {
+        serverSelectionTimeoutMS: 30000,
+        connectTimeoutMS: 10000,
+        socketTimeoutMS: 45000,
+        maxPoolSize: 10,
+        retryWrites: true,
+        retryReads: true,
+        family: 4, // Use IPv4 explicitly
+      });
+      console.log(`✅ MongoDB connected`);
+      return; // Exit the loop on successful connection
+    } catch (err) {
+      console.error('❌ MongoDB connection error:', {
+        message: err.message,
+        stack: err.stack,
+        code: err.code,
+      });
+      retries--;
+      if (retries > 0) {
+        console.log(`Retrying connection (${retries} attempts left)...`);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        delay *= 2; // Exponential backoff
+      } else {
+        console.error('❌ Max retries reached. Server will continue running without MongoDB.');
+        // Instead of exiting, allow the server to run
+        return;
+      }
     }
   }
 };
+
+// MongoDB connection events
+mongoose.connection.on('connected', () => console.log('MongoDB connection established'));
+mongoose.connection.on('disconnected', () => console.warn('MongoDB disconnected'));
+mongoose.connection.on('error', (err) => console.error('MongoDB connection error:', err.message));
+
+// Start MongoDB connection
 connectDB();
 
 // Start Server
@@ -202,12 +235,12 @@ const server = app.listen(PORT, () => {
 
 // Handle uncaught exceptions and rejections
 process.on('uncaughtException', (err) => {
-  console.error('Uncaught Exception:', err.message);
+  console.error('Uncaught Exception:', { message: err.message, stack: err.stack });
   server.close(() => process.exit(1));
 });
 
 process.on('unhandledRejection', (err) => {
-  console.error('Unhandled Rejection:', err.message);
+  console.error('Unhandled Rejection:', { message: err.message, stack: err.stack });
   server.close(() => process.exit(1));
 });
 

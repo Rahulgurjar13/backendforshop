@@ -2,15 +2,24 @@ const express = require('express');
 const router = express.Router();
 const Razorpay = require('razorpay');
 const crypto = require('crypto');
-const Order = require('../models/order.js');
+const Order = require('../models/order');
 const { authenticateAdmin } = require('../middleware/authenticateAdmin');
-const { sendEmail, generateOrderEmail } = require('../utils/email'); // Import email utility
+const { sendEmail, generateOrderEmail } = require('../utils/email');
 
 // Initialize Razorpay
 const razorpay = new Razorpay({
   key_id: process.env.RAZORPAY_KEY_ID,
   key_secret: process.env.RAZORPAY_KEY_SECRET,
 });
+
+// Centralized error handler
+const handleError = (res, error, message, status = 500) => {
+  console.error(message, {
+    message: error.message,
+    stack: error.stack,
+  });
+  res.status(status).json({ error: message, details: error.message });
+};
 
 // POST /api/orders - Create a new order
 router.post('/', async (req, res) => {
@@ -45,13 +54,13 @@ router.post('/', async (req, res) => {
       ...orderData,
       orderId,
       paymentStatus: orderData.paymentMethod === 'COD' ? 'Paid' : 'Pending',
-      emailSent: false, // Track if email has been sent
+      emailSent: false,
     });
 
     await order.save();
     console.log(`${orderData.paymentMethod} order created: ${orderId}`);
 
-    // Send email for COD orders (Paid status)
+    // Send email for COD orders
     if (orderData.paymentMethod === 'COD') {
       try {
         await sendEmail({
@@ -64,23 +73,18 @@ router.post('/', async (req, res) => {
         console.log(`Confirmation email sent for COD order: ${orderId}`);
       } catch (emailError) {
         console.error(`Failed to send email for COD order ${orderId}:`, emailError.message);
-        // Continue despite email failure
       }
     }
 
     return res.status(201).json({ orderData: { ...orderData, orderId } });
   } catch (error) {
-    console.error('Error processing order:', {
-      message: error.message,
-      stack: error.stack,
-    });
     if (error.code === 11000) {
-      return res.status(400).json({ error: 'Duplicate order ID' });
+      return handleError(res, error, 'Duplicate order ID', 400);
     }
     if (error.name === 'ValidationError') {
-      return res.status(400).json({ error: 'Validation error', details: error.errors });
+      return handleError(res, error, 'Validation error', 400);
     }
-    res.status(500).json({ error: 'Failed to process order', details: error.message });
+    handleError(res, error, 'Failed to process order');
   }
 });
 
@@ -110,11 +114,7 @@ router.post('/initiate-razorpay-payment', async (req, res) => {
       orderData,
     });
   } catch (error) {
-    console.error('Error initiating Razorpay payment:', {
-      message: error.message,
-      stack: error.stack,
-    });
-    res.status(500).json({ error: 'Failed to initiate Razorpay payment', details: error.message });
+    handleError(res, error, 'Failed to initiate Razorpay payment');
   }
 });
 
@@ -173,18 +173,13 @@ router.post('/verify-razorpay-payment', async (req, res) => {
         console.log(`Confirmation email sent for Razorpay order: ${orderId}`);
       } catch (emailError) {
         console.error(`Failed to send email for Razorpay order ${orderId}:`, emailError.message);
-        // Continue despite email failure
       }
     }
 
     console.log(`Razorpay payment verified and order updated: ${orderId}, paymentId: ${razorpay_payment_id}`);
     res.status(200).json({ success: true, order });
   } catch (error) {
-    console.error('Error verifying Razorpay payment:', {
-      message: error.message,
-      stack: error.stack,
-    });
-    res.status(500).json({ error: 'Failed to verify Razorpay payment', details: error.message });
+    handleError(res, error, 'Failed to verify Razorpay payment');
   }
 });
 
@@ -253,7 +248,6 @@ router.post('/webhook', async (req, res) => {
           console.log(`Confirmation email sent via webhook for order: ${order.orderId}`);
         } catch (emailError) {
           console.error(`Failed to send email for order ${order.orderId} via webhook:`, emailError.message);
-          // Continue despite email failure
         }
       }
 
@@ -274,11 +268,7 @@ router.post('/webhook', async (req, res) => {
 
     res.status(200).json({ success: true });
   } catch (error) {
-    console.error('Webhook processing error:', {
-      message: error.message,
-      stack: error.stack,
-    });
-    res.status(500).json({ error: 'Failed to process webhook', details: error.message });
+    handleError(res, error, 'Failed to process webhook');
   }
 });
 
@@ -289,11 +279,7 @@ router.get('/pending', authenticateAdmin, async (req, res) => {
     console.log(`Fetched ${pendingOrders.length} pending Razorpay orders`);
     res.status(200).json(pendingOrders);
   } catch (error) {
-    console.error('Error fetching pending orders:', {
-      message: error.message,
-      stack: error.stack,
-    });
-    res.status(500).json({ error: 'Failed to fetch pending orders', details: error.message });
+    handleError(res, error, 'Failed to fetch pending orders');
   }
 });
 
@@ -302,7 +288,7 @@ router.get('/', authenticateAdmin, async (req, res) => {
   try {
     const { date, orderId } = req.query;
 
-    const query = { paymentStatus: 'Paid' }; // Only fetch Paid orders
+    const query = { paymentStatus: 'Paid' };
     if (date) {
       if (!isValidDate(date)) {
         return res.status(400).json({ error: 'Invalid date format' });
@@ -327,11 +313,7 @@ router.get('/', authenticateAdmin, async (req, res) => {
     console.log(`Fetched ${orders.length} paid orders with query:`, JSON.stringify(query));
     res.status(200).json(orders);
   } catch (error) {
-    console.error('Error fetching orders:', {
-      message: error.message,
-      stack: error.stack,
-    });
-    res.status(500).json({ error: 'Failed to fetch orders', details: error.message });
+    handleError(res, error, 'Failed to fetch orders');
   }
 });
 

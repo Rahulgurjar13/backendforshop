@@ -109,7 +109,7 @@ const orderSchema = new mongoose.Schema({
   date: { type: Date, default: Date.now },
   total: { type: Number, required: true, min: [0, 'Total cannot be negative'] },
   updatedAt: { type: Date, default: Date.now },
-  emailSent: { type: Boolean, default: false }, // New field to track email status
+  emailSent: { type: Boolean, default: false },
 });
 
 orderSchema.pre('save', function (next) {
@@ -133,7 +133,6 @@ orderSchema.pre('validate', function (next) {
   next();
 });
 
-orderSchema.index({ date: -1 });
-orderSchema.index({ orderId: 1 });
+orderSchema.index({ date: -1 }); // Only date index, removed duplicate orderId index
 
 module.exports = mongoose.model('Order', orderSchema);
