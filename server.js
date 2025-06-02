@@ -5,7 +5,9 @@ const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+const cron = require('node-cron'); // Added for cron job
 const User = require('./models/User');
+const Order = require('./models/Order'); // Added for cleanup
 const orderRoutes = require('./routes/orders');
 const contactRoutes = require('./routes/contact');
 const { checkAdminStatus } = require('./middleware/authenticateAdmin');
@@ -19,8 +21,8 @@ const requiredEnvVars = [
   'CORS_ORIGINS',
   'BACKEND_URL',
   'FRONTEND_URL',
-  'RAZORPAY_KEY_ID', // Added for Razorpay
-  'RAZORPAY_KEY_SECRET', // Added for Razorpay
+  'RAZORPAY_KEY_ID',
+  'RAZORPAY_KEY_SECRET',
 ];
 const missingEnvVars = requiredEnvVars.filter((varName) => !process.env[varName]);
 const invalidEnvVars = [];
@@ -76,7 +78,7 @@ app.use(
           "'self'",
           'https://backendforshop.onrender.com',
           'https://www.nisargmaitri.in',
-          'https://api.razorpay.com', // Added for Razorpay
+          'https://api.razorpay.com',
         ],
       },
     },
@@ -118,8 +120,8 @@ console.log('Environment Configuration:', {
   CORS_ORIGINS: process.env.CORS_ORIGINS,
   BACKEND_URL: process.env.BACKEND_URL,
   FRONTEND_URL: process.env.FRONTEND_URL,
-  RAZORPAY_KEY_ID: process.env.RAZORPAY_KEY_ID ? 'Set' : 'Not set', // Added
-  RAZORPAY_KEY_SECRET: process.env.RAZORPAY_KEY_SECRET ? 'Set' : 'Not set', // Added
+  RAZORPAY_KEY_ID: process.env.RAZORPAY_KEY_ID ? 'Set' : 'Not set',
+  RAZORPAY_KEY_SECRET: process.env.RAZORPAY_KEY_SECRET ? 'Set' : 'Not set',
 });
 
 // Authentication route: Login
@@ -171,6 +173,19 @@ app.get('/health', (req, res) => {
   });
 });
 
+// Schedule cleanup of old pending orders
+cron.schedule('*/15 * * * *', async () => {
+  try {
+    const result = await Order.deleteMany({
+      paymentStatus: 'Pending',
+      createdAt: { $lt: new Date(Date.now() - 15 * 60 * 1000) },
+    });
+    console.log(`Cleaned up ${result.deletedCount} old pending orders`);
+  } catch (error) {
+    console.error('Error cleaning up pending orders:', error.message);
+  }
+});
+
 // MongoDB Connection with exponential backoff
 const connectDB = async (retries = 5, delay = 5000) => {
   try {
@@ -188,7 +203,7 @@ const connectDB = async (retries = 5, delay = 5000) => {
       console.log(`Retrying connection (${retries} attempts left)...`);
       setTimeout(() => connectDB(retries - 1, delay * 2), delay);
     } else {
-      console.error('❌ Max retries reached. Exiting...');
+      console.error('❌ Max retries reached.');
       process.exit(1);
     }
   }
@@ -198,7 +213,7 @@ connectDB();
 // Start Server
 const PORT = process.env.PORT || 5001;
 const server = app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`🚗 Server running on port ${PORT}`);
 });
 
 // Handle uncaught exceptions and rejections

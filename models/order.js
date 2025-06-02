@@ -62,7 +62,7 @@ const orderSchema = new mongoose.Schema({
   paymentMethod: {
     type: String,
     required: true,
-    enum: ['COD', 'Razorpay'], // Added Razorpay
+    enum: ['COD', 'Razorpay'],
     default: 'COD',
   },
   paymentStatus: {
@@ -71,11 +71,11 @@ const orderSchema = new mongoose.Schema({
     enum: ['Pending', 'Paid', 'Failed'],
     default: 'Pending',
   },
-  paymentId: { // Added for Razorpay payment ID
+  paymentId: {
     type: String,
     trim: true,
   },
-  razorpayOrderId: { // Added for Razorpay order ID
+  razorpayOrderId: {
     type: String,
     trim: true,
   },
@@ -93,13 +93,11 @@ const orderSchema = new mongoose.Schema({
   updatedAt: { type: Date, default: Date.now },
 });
 
-// Update `updatedAt` on every save
 orderSchema.pre('save', function (next) {
   this.updatedAt = new Date();
   next();
 });
 
-// Validate total matches items, shipping cost, and coupon discount
 orderSchema.pre('validate', function (next) {
   const itemsTotal = this.items.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const expectedTotal = itemsTotal + this.shippingMethod.cost - (this.coupon.discount || 0);
@@ -109,7 +107,6 @@ orderSchema.pre('validate', function (next) {
   next();
 });
 
-// Index for efficient querying
 orderSchema.index({ date: -1 });
 
 module.exports = mongoose.model('Order', orderSchema);

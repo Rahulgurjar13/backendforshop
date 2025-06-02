@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const Razorpay = require('razorpay');
 const crypto = require('crypto');
-const Order = require('../models/order');
+const Order = require('../models/Order');
 const { authenticateAdmin } = require('../middleware/authenticateAdmin');
 
 // Initialize Razorpay
@@ -40,19 +40,24 @@ router.post('/', async (req, res) => {
     // Generate unique orderId
     const orderId = `ORDER-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 
-    // Create order in MongoDB
-    const order = new Order({
-      ...orderData,
-      orderId,
-      paymentStatus: 'Pending',
-    });
+    if (orderData.paymentMethod === 'COD') {
+      // For COD, create the order immediately with Paid status
+      const order = new Order({
+        ...orderData,
+        orderId,
+        paymentStatus: 'Paid',
+      });
 
-    await order.save();
-
-    console.log(`Order created: ${orderId} with payment method: ${orderData.paymentMethod}`);
-    res.status(201).json({ order });
+      await order.save();
+      console.log(`COD order created: ${orderId}`);
+      return res.status(201).json({ order });
+    } else {
+      // For Razorpay, return order data without saving
+      console.log(`Preparing Razorpay order: ${orderId}`);
+      return res.status(200).json({ orderData: { ...orderData, orderId } });
+    }
   } catch (error) {
-    console.error('Error creating order:', {
+    console.error('Error processing order:', {
       message: error.message,
       stack: error.stack,
     });
@@ -62,26 +67,19 @@ router.post('/', async (req, res) => {
     if (error.name === 'ValidationError') {
       return res.status(400).json({ error: 'Validation error', details: error.errors });
     }
-    res.status(500).json({ error: 'Failed to create order', details: error.message });
+    res.status(500).json({ error: 'Failed to process order', details: error.message });
   }
 });
 
 // POST /api/orders/initiate-razorpay-payment - Initiate Razorpay payment
 router.post('/initiate-razorpay-payment', async (req, res) => {
   try {
-    const { orderId, amount, currency, receipt, customer } = req.body;
+    const { orderId, amount, currency, receipt, customer, orderData } = req.body;
 
     // Validate input
-    if (!orderId || !amount || !currency || !receipt || !customer) {
+    if (!orderId || !amount || !currency || !receipt || !customer || !orderData) {
       console.warn('Missing required fields for Razorpay payment:', req.body);
       return res.status(400).json({ error: 'Missing required fields' });
-    }
-
-    // Find the order
-    const order = await Order.findOne({ orderId });
-    if (!order) {
-      console.warn(`Order not found: ${orderId}`);
-      return res.status(404).json({ error: 'Order not found' });
     }
 
     // Create Razorpay order
@@ -94,14 +92,11 @@ router.post('/initiate-razorpay-payment', async (req, res) => {
       },
     });
 
-    // Update order with Razorpay order ID
-    order.razorpayOrderId = razorpayOrder.id;
-    await order.save();
-
     console.log(`Razorpay order created for orderId: ${orderId}, razorpayOrderId: ${razorpayOrder.id}`);
     res.status(200).json({
       razorpayOrderId: razorpayOrder.id,
       keyId: process.env.RAZORPAY_KEY_ID,
+      orderData, // Return orderData for verification
     });
   } catch (error) {
     console.error('Error initiating Razorpay payment:', {
@@ -115,19 +110,12 @@ router.post('/initiate-razorpay-payment', async (req, res) => {
 // POST /api/orders/verify-razorpay-payment - Verify Razorpay payment
 router.post('/verify-razorpay-payment', async (req, res) => {
   try {
-    const { orderId, razorpay_payment_id, razorpay_order_id, razorpay_signature } = req.body;
+    const { orderId, razorpay_payment_id, razorpay_order_id, razorpay_signature, orderData } = req.body;
 
     // Validate input
-    if (!orderId || !razorpay_payment_id || !razorpay_order_id || !razorpay_signature) {
+    if (!orderId || !razorpay_payment_id || !razorpay_order_id || !razorpay_signature || !orderData) {
       console.warn('Missing required fields for Razorpay verification:', req.body);
       return res.status(400).json({ error: 'Missing required fields' });
-    }
-
-    // Find the order
-    const order = await Order.findOne({ orderId, razorpayOrderId: razorpay_order_id });
-    if (!order) {
-      console.warn(`Order not found or invalid razorpayOrderId: ${orderId}`);
-      return res.status(404).json({ error: 'Order not found or invalid Razorpay order ID' });
     }
 
     // Verify payment signature
@@ -141,12 +129,18 @@ router.post('/verify-razorpay-payment', async (req, res) => {
       return res.status(400).json({ error: 'Invalid payment signature' });
     }
 
-    // Update order
-    order.paymentId = razorpay_payment_id;
-    order.paymentStatus = 'Paid';
+    // Create order in MongoDB
+    const order = new Order({
+      ...orderData,
+      orderId,
+      paymentId: razorpay_payment_id,
+      razorpayOrderId: razorpay_order_id,
+      paymentStatus: 'Paid',
+    });
+
     await order.save();
 
-    console.log(`Razorpay payment verified for orderId: ${orderId}, paymentId: ${razorpay_payment_id}`);
+    console.log(`Razorpay payment verified and order created: ${orderId}, paymentId: ${razorpay_payment_id}`);
     res.status(200).json({ success: true, order });
   } catch (error) {
     console.error('Error verifying Razorpay payment:', {
@@ -162,7 +156,7 @@ router.get('/', authenticateAdmin, async (req, res) => {
   try {
     const { date, orderId } = req.query;
 
-    const query = {};
+    const query = { paymentStatus: 'Paid' }; // Only fetch Paid orders
     if (date) {
       if (!isValidDate(date)) {
         return res.status(400).json({ error: 'Invalid date format' });
@@ -184,7 +178,7 @@ router.get('/', authenticateAdmin, async (req, res) => {
     }
 
     const orders = await Order.find(query).sort({ date: -1 });
-    console.log(`Fetched ${orders.length} orders with query:`, JSON.stringify(query));
+    console.log(`Fetched ${orders.length} paid orders with query:`, JSON.stringify(query));
     res.status(200).json(orders);
   } catch (error) {
     console.error('Error fetching orders:', {
