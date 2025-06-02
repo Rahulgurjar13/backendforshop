@@ -8,7 +8,7 @@ const rateLimit = require('express-rate-limit');
 const cron = require('node-cron'); // Added for cron job
 const User = require('./models/User');
 const Order = require('./models/Order'); // Added for cleanup
-const orderRoutes = require('./routes/Orders');
+const orderRoutes = require('./routes/Orders.js');
 const contactRoutes = require('./routes/contact');
 const { checkAdminStatus } = require('./middleware/authenticateAdmin');
 
