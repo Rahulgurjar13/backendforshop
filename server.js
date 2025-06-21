@@ -2,15 +2,16 @@ require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-const jwt = require('jsonwebtoken');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+const csurf = require('csurf');
+const cookieParser = require('cookie-parser');
 const cron = require('node-cron');
-const User = require('./models/User');
-const Order = require('./models/order');
+const jwt = require('jsonwebtoken');
+const Order = require('./models/Order');
+const authRoutes = require('./routes/auth');
 const orderRoutes = require('./routes/orders');
 const contactRoutes = require('./routes/contact');
-const { checkAdminStatus } = require('./middleware/authenticateAdmin');
 
 // Validate environment variables
 const requiredEnvVars = [
@@ -18,37 +19,37 @@ const requiredEnvVars = [
   'JWT_SECRET',
   'EMAIL_USER',
   'EMAIL_PASS',
+  'SUPPORT_EMAIL',
   'CORS_ORIGINS',
   'BACKEND_URL',
   'FRONTEND_URL',
   'RAZORPAY_KEY_ID',
   'RAZORPAY_KEY_SECRET',
-  'RAZORPAY_WEBHOOK_SECRET',
 ];
 const missingEnvVars = requiredEnvVars.filter((varName) => !process.env[varName]);
 if (missingEnvVars.length > 0) {
-  console.error(`❌ Missing environment variables: ${missingEnvVars.join(', ')}. Please check your .env file.`);
+  console.error(`❌ Missing environment variables: ${missingEnvVars.join(', ')}`);
   process.exit(1);
 }
 
-// Validate MONGO_URI format
 if (!process.env.MONGO_URI.startsWith('mongodb://') && !process.env.MONGO_URI.startsWith('mongodb+srv://')) {
-  console.error('❌ Invalid MONGO_URI format. Must start with mongodb:// or mongodb+srv://');
+  console.error('❌ Invalid MONGO_URI format');
   process.exit(1);
 }
 
-// Validate CORS_ORIGINS
 const allowedOrigins = process.env.CORS_ORIGINS.split(',').map((o) => o.trim());
 if (!allowedOrigins.includes('https://www.nisargmaitri.in')) {
   console.error('❌ CORS_ORIGINS must include https://www.nisargmaitri.in');
   process.exit(1);
 }
 
-// Initialize Express
 const app = express();
 app.set('trust proxy', 1);
 
-// Rate Limiting
+// Store SSE clients
+global.clients = new Set();
+
+// Rate limiting middleware
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: process.env.NODE_ENV === 'production' ? 500 : 1000,
@@ -62,106 +63,149 @@ const limiter = rateLimit({
     });
   },
 });
-app.use(limiter);
 
-// Middleware
+app.use(limiter);
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
+app.use(cookieParser());
+
+// Security headers with Helmet
 app.use(
   helmet({
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        scriptSrc: ["'self'", "'unsafe-inline'"],
+        scriptSrc: ["'self'", process.env.NODE_ENV === 'development' ? "'unsafe-inline'" : null].filter(Boolean),
         styleSrc: ["'self'", "'unsafe-inline'"],
         connectSrc: [
           "'self'",
-          'https://backendforshop.onrender.com',
-          'https://www.nisargmaitri.in',
+          process.env.BACKEND_URL,
+          process.env.FRONTEND_URL,
           'https://api.razorpay.com',
-        ],
+          process.env.NODE_ENV === 'development' ? 'http://localhost:5001' : null,
+          process.env.NODE_ENV === 'development' ? 'http://localhost:5173' : null,
+        ].filter(Boolean),
       },
     },
   })
 );
+
+// CORS configuration
 app.use(
   cors({
     origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin)) {
+      if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV === 'development') {
         callback(null, true);
       } else {
-        callback(new Error('Not allowed by CORS'));
+        callback(new Error(`CORS error: Origin ${origin} not allowed`));
       }
     },
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token'],
     credentials: true,
   })
 );
 
-// Log requests
+// CSRF protection
+const csrfProtection = csurf({
+  cookie: {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax',
+  },
+});
+app.use((req, res, next) => {
+  if (req.path === '/api/order-updates' || req.method === 'GET') {
+    return next();
+  }
+  console.log(`CSRF check for ${req.method} ${req.path}, token: ${req.headers['x-csrf-token'] || 'none'}, cookie: ${req.cookies._csrf || 'none'}`);
+  csrfProtection(req, res, next);
+});
+
+// CSRF token endpoint
+app.get('/api/csrf-token', csrfProtection, (req, res) => {
+  const token = req.csrfToken();
+  console.log(`Generated CSRF token: ${token} for IP: ${req.ip}`);
+  res.json({ csrfToken: token });
+});
+
+// SSE endpoint for order updates
+app.get('/api/order-updates', async (req, res) => {
+  const token = req.query.token;
+  if (!token) {
+    return res.status(401).send('Unauthorized');
+  }
+
+  try {
+    jwt.verify(token, process.env.JWT_SECRET);
+  } catch (err) {
+    console.warn(`Invalid SSE token: ${err.message}`);
+    return res.status(401).send('Invalid token');
+  }
+
+  res.set({
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+  });
+
+  const client = { id: Date.now(), res };
+  global.clients.add(client);
+
+  res.write('data: {"type": "connected"}\n\n');
+
+  req.on('close', () => {
+    global.clients.delete(client);
+    console.log(`Client ${client.id} disconnected`);
+  });
+});
+
+// Request logging with masked sensitive data
 app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`, {
     ip: req.ip,
-    headers: req.headers,
-    body: req.method === 'POST' ? req.body : undefined,
+    headers: {
+      authorization: req.headers.authorization ? 'Bearer <hidden>' : undefined,
+      'x-csrf-token': req.headers['x-csrf-token'] ? '<hidden>' : undefined,
+    },
+    body: ['POST', 'PUT'].includes(req.method)
+      ? {
+          ...req.body,
+          customer: req.body.customer
+            ? { ...req.body.customer, email: req.body.customer.email?.replace(/(.{2}).*@/, '$1***@') }
+            : undefined,
+        }
+      : undefined,
   });
+  if (req.path === '/health') return next();
+  if (mongoose.connection.readyState !== 1) {
+    return res.status(503).json({ error: 'Service unavailable: Database not connected' });
+  }
   next();
 });
 
-// Debug environment
+// Environment configuration logging
 console.log('Environment Configuration:', {
-  NODE_ENV: process.env.NODE_ENV || 'development',
+  NODE_ENV: process.env.NODE_ENV,
   PORT: process.env.PORT || 5001,
   MONGO_URI: process.env.MONGO_URI ? 'Set' : 'Not set',
   JWT_SECRET: process.env.JWT_SECRET ? 'Set' : 'Not set',
   EMAIL_USER: process.env.EMAIL_USER ? 'Set' : 'Not set',
   EMAIL_PASS: process.env.EMAIL_PASS ? 'Set' : 'Not set',
+  SUPPORT_EMAIL: process.env.SUPPORT_EMAIL ? 'Set' : 'Not set',
   CORS_ORIGINS: process.env.CORS_ORIGINS,
   BACKEND_URL: process.env.BACKEND_URL,
   FRONTEND_URL: process.env.FRONTEND_URL,
   RAZORPAY_KEY_ID: process.env.RAZORPAY_KEY_ID ? 'Set' : 'Not set',
   RAZORPAY_KEY_SECRET: process.env.RAZORPAY_KEY_SECRET ? 'Set' : 'Not set',
-  RAZORPAY_WEBHOOK_SECRET: process.env.RAZORPAY_WEBHOOK_SECRET ? 'Set' : 'Not set',
 });
-
-// Authentication route: Login
-app.post('/api/auth/login', async (req, res) => {
-  const { email, password } = req.body;
-
-  if (!email || !password) {
-    console.warn('Missing login credentials');
-    return res.status(400).json({ error: 'Email and password are required' });
-  }
-
-  try {
-    const user = await User.findOne({ email: email.toLowerCase() });
-    if (!user || !(await user.comparePassword(password))) {
-      console.log(`Login failed for: ${email}`);
-      return res.status(401).json({ error: 'Invalid email or password' });
-    }
-
-    const token = jwt.sign(
-      { id: user._id, email: user.email, isAdmin: user.isAdmin },
-      process.env.JWT_SECRET,
-      { expiresIn: '1h' }
-    );
-    console.log(`Login successful for: ${user.email}`);
-    res.status(200).json({ token, isAdmin: user.isAdmin, email: user.email });
-  } catch (error) {
-    console.error('Login error:', { message: error.message, stack: error.stack });
-    res.status(500).json({ error: 'Login failed', details: error.message });
-  }
-});
-
-// Admin status check
-app.get('/api/auth/check-admin', checkAdminStatus);
 
 // Routes
+app.use('/api/auth', authRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/contact', contactRoutes);
 
-// Health Check
+// Health check endpoint
 app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'OK',
@@ -171,8 +215,9 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Schedule cleanup of old pending orders
+// Cleanup old pending/failed orders daily
 cron.schedule('0 0 * * *', async () => {
+  if (mongoose.connection.readyState !== 1) return;
   try {
     const result = await Order.deleteMany({
       paymentStatus: { $in: ['Pending', 'Failed'] },
@@ -180,46 +225,55 @@ cron.schedule('0 0 * * *', async () => {
     });
     console.log(`Cleaned up ${result.deletedCount} old pending/failed orders`);
   } catch (error) {
-    console.error('Error cleaning up pending orders:', { message: error.message, stack: error.stack });
+    console.error('Error cleaning up pending orders:', error.message);
   }
 });
 
-// MongoDB Connection
+// MongoDB connection with retry
 const connectDB = async (retries = 5, delay = 5000) => {
+  const isMongoAtlas = process.env.MONGO_URI.startsWith('mongodb+srv://');
   while (retries > 0) {
     try {
-      await mongoose.connect(process.env.MONGO_URI, {
+      console.log(`[${new Date().toISOString()}] INFO Attempting MongoDB connection (Attempt ${6 - retries}/${retries + 1})...`);
+      const mongooseOptions = {
         serverSelectionTimeoutMS: 30000,
         connectTimeoutMS: 10000,
         socketTimeoutMS: 45000,
         maxPoolSize: 10,
         retryWrites: true,
         retryReads: true,
-        family: 4, // Use IPv4 explicitly
-      });
-      console.log(`✅ MongoDB connected`);
-      return; // Exit the loop on successful connection
+        family: 4,
+      };
+
+      if (isMongoAtlas) {
+        mongooseOptions.tls = true;
+      } else {
+        mongooseOptions.tls = false;
+      }
+
+      await mongoose.connect(process.env.MONGO_URI, mongooseOptions);
+      console.log(`✅ MongoDB connected (Atlas: ${isMongoAtlas})`);
+      return;
     } catch (err) {
       console.error('❌ MongoDB connection error:', {
         message: err.message,
-        stack: err.stack,
         code: err.code,
+        uri: process.env.MONGO_URI.replace(/:([^@]+)@/, ':<hidden>@'),
       });
       retries--;
       if (retries > 0) {
         console.log(`Retrying connection (${retries} attempts left)...`);
         await new Promise((resolve) => setTimeout(resolve, delay));
-        delay *= 2; // Exponential backoff
+        delay *= 2;
       } else {
         console.error('❌ Max retries reached. Server will continue running without MongoDB.');
-        // Instead of exiting, allow the server to run
         return;
       }
     }
   }
 };
 
-// MongoDB connection events
+// MongoDB event listeners
 mongoose.connection.on('connected', () => console.log('MongoDB connection established'));
 mongoose.connection.on('disconnected', () => console.warn('MongoDB disconnected'));
 mongoose.connection.on('error', (err) => console.error('MongoDB connection error:', err.message));
@@ -227,7 +281,7 @@ mongoose.connection.on('error', (err) => console.error('MongoDB connection error
 // Start MongoDB connection
 connectDB();
 
-// Start Server
+// Start server
 const PORT = process.env.PORT || 5001;
 const server = app.listen(PORT, () => {
   console.log(`🚗 Server running on port ${PORT}`);
@@ -244,11 +298,15 @@ process.on('unhandledRejection', (err) => {
   server.close(() => process.exit(1));
 });
 
-// Global Error Handler
+// Catch-all route for undefined endpoints
+app.use((req, res) => {
+  res.status(404).json({ error: 'Route not found' });
+});
+
+// Global error handler
 app.use((err, req, res, next) => {
   console.error('Server Error:', {
     message: err.message,
-    stack: err.stack,
     path: req.path,
     method: req.method,
     ip: req.ip,
@@ -258,6 +316,9 @@ app.use((err, req, res, next) => {
   }
   if (err.message.includes('Not allowed by CORS')) {
     return res.status(403).json({ error: 'CORS error', details: err.message });
+  }
+  if (err.code === 'EBADCSRFTOKEN') {
+    return res.status(403).json({ error: 'Invalid CSRF token' });
   }
   res.status(500).json({ error: 'Internal server error', details: err.message });
 });

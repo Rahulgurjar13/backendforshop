@@ -7,10 +7,12 @@ const userSchema = new mongoose.Schema({
     unique: true,
     lowercase: true,
     trim: true,
+    match: [/^[^\s@]+@[^\s@]+\.[^\s@]+$/, 'Invalid email format'],
   },
   password: {
     type: String,
     required: [true, 'Password is required'],
+    minlength: [6, 'Password must be at least 6 characters'],
   },
   isAdmin: {
     type: Boolean,

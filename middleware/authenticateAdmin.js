@@ -1,10 +1,9 @@
-require('dotenv').config();
 const jwt = require('jsonwebtoken');
 const { promisify } = require('util');
 
 const authenticateAdmin = async (req, res, next) => {
   const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1]; // Expecting "Bearer <token>"
+  const token = authHeader && authHeader.split(' ')[1];
 
   if (!token) {
     return res.status(401).json({ error: 'Access denied, no token provided' });
@@ -26,7 +25,7 @@ const authenticateAdmin = async (req, res, next) => {
     if (error.name === 'TokenExpiredError') {
       return res.status(401).json({ error: 'Token has expired', expiredAt: error.expiredAt });
     } else if (error.name === 'JsonWebTokenError') {
-      return res.status(401).json({ error: 'Invalid token format or signature' });
+      return res.status(400).json({ error: 'Invalid token format or signature' });
     } else if (error.name === 'NotBeforeError') {
       return res.status(403).json({ error: 'Token not yet valid', notBefore: error.date });
     }
@@ -47,7 +46,7 @@ const checkAdminStatus = async (req, res) => {
     const decoded = await verifyAsync(token, process.env.JWT_SECRET);
     return res.status(200).json({ isAdmin: !!decoded.isAdmin, email: decoded.email });
   } catch (error) {
-    console.error('Check admin status failed:', error.message);
+    console.error('Error checking admin status:', error.message);
     return res.status(200).json({ isAdmin: false });
   }
 };
