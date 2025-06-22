@@ -124,7 +124,7 @@ app.use((req, res, next) => {
 // CSRF protection
 const csrfProtection = csurf({
   cookie: {
-    key: '_csrf',
+    key: '_csrf', // Explicitly set cookie name
     httpOnly: true,
     secure: cookieSecure,
     sameSite: cookieSameSite,
@@ -134,6 +134,7 @@ const csrfProtection = csurf({
 
 // Apply CSRF middleware selectively
 app.use((req, res, next) => {
+  // Skip CSRF for specific routes
   if (
     req.path === '/api/order-updates' ||
     req.method === 'GET' ||
@@ -171,10 +172,16 @@ app.use((req, res, next) => {
 app.get('/api/csrf-token', csrfProtection, (req, res) => {
   const token = req.csrfToken();
   console.log(
-    `Generated CSRF token: ${token}, Expected Cookie: _csrf, IP: ${req.ip}, Origin: ${
+    `Generated CSRF token: ${token}, Set-Cookie: _csrf=${req.cookies._csrf || 'new'}, IP: ${req.ip}, Origin: ${
       req.headers.origin || 'none'
     }`
   );
+  res.cookie('_csrf', token, {
+    httpOnly: true,
+    secure: cookieSecure,
+    sameSite: cookieSameSite,
+    maxAge: 24 * 60 * 60 * 1000, // 24 hours
+  });
   res.json({ csrfToken: token });
 });
 
