@@ -17,11 +17,11 @@ const handleError = (res, error, message, status = 500) => {
   res.status(status).json({ error: message, details: error.message });
 };
 
-// Helper to calculate shipping cost based on subtotal
+// Helper to calculate shipping cost based on subtotal (aligned with frontend)
 const calculateShippingCost = (subtotal) => {
   if (subtotal >= 800) return 0;
   if (subtotal >= 500) return 50;
-  return 80;
+  return 80; // Fixed to match frontend expectation
 };
 
 // Helper to validate and calculate order totals
@@ -31,6 +31,7 @@ const validateOrderTotals = (orderData) => {
   let shippingCost = expectedShippingCost;
   let couponDiscount = 0;
 
+  // Handle FREESHIPPING coupon
   if (orderData.coupon.code && orderData.coupon.code.toUpperCase() === 'FREESHIPPING') {
     couponDiscount = expectedShippingCost;
     shippingCost = 0;
@@ -223,11 +224,7 @@ router.post('/', async (req, res) => {
       try {
         const html = await generateOrderEmail({
           ...order.toObject(),
-          createdAt: new Date(order.createdAt).toLocaleDateString('en-IN', {
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric',
-          }),
+          createdAt: order.createdAt.toISOString().split('T')[0],
         });
         await sendEmail({
           email: order.customer.email,
@@ -254,7 +251,6 @@ router.post('/', async (req, res) => {
   }
 });
 
-// Other routes remain unchanged (e.g., /initiate-razorpay-payment, /verify-razorpay-payment, etc.)
 router.post('/initiate-razorpay-payment', async (req, res) => {
   try {
     const { orderId } = req.body;
@@ -264,6 +260,7 @@ router.post('/initiate-razorpay-payment', async (req, res) => {
       return res.status(400).json({ error: 'Missing orderId' });
     }
 
+    // Fetch order
     const order = await Order.findOne({
       orderId,
       paymentStatus: 'Pending',
@@ -275,13 +272,16 @@ router.post('/initiate-razorpay-payment', async (req, res) => {
       return res.status(404).json({ error: 'Order not found or not in pending state' });
     }
 
+    // Check order timeout
     if (!isOrderValid(order.createdAt)) {
       console.warn(`Order timed out for orderId: ${orderId}`);
       return res.status(400).json({ error: 'Order has expired. Please create a new order.' });
     }
 
+    // Validate order totals
     const totals = validateOrderTotals(order);
 
+    // Verify shipping cost and coupon
     let validationError = null;
     if (order.coupon.code && order.coupon.code.toUpperCase() === 'FREESHIPPING') {
       if (order.shippingMethod.cost !== 0) {
@@ -296,6 +296,7 @@ router.post('/initiate-razorpay-payment', async (req, res) => {
       return res.status(400).json({ error: validationError });
     }
 
+    // Verify total
     if (Math.abs(totals.calculatedTotal - order.total) > 0.01) {
       console.warn(`Total mismatch in Razorpay initiation: stored ${order.total}, calculated ${totals.calculatedTotal}`, {
         orderId,
@@ -309,10 +310,12 @@ router.post('/initiate-razorpay-payment', async (req, res) => {
       });
     }
 
+    // Calculate amount in paise
     const amount = Math.max(100, Math.round(order.total * 100));
     const currency = 'INR';
     const receipt = orderId;
 
+    // Create Razorpay order
     let razorpayOrder;
     try {
       razorpayOrder = await razorpay.orders.create({
@@ -335,6 +338,7 @@ router.post('/initiate-razorpay-payment', async (req, res) => {
       return res.status(500).json({ error: 'Failed to create Razorpay order' });
     }
 
+    // Store razorpayOrderId
     order.razorpayOrderId = razorpayOrder.id;
     await order.save();
 
@@ -376,6 +380,7 @@ router.post('/verify-razorpay-payment', async (req, res) => {
       return res.status(400).json({ error: 'Missing required fields for payment verification' });
     }
 
+    // Verify signature
     const generatedSignature = crypto
       .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
       .update(`${razorpay_order_id}|${razorpay_payment_id}`)
@@ -389,12 +394,14 @@ router.post('/verify-razorpay-payment', async (req, res) => {
       return res.status(400).json({ error: 'Invalid payment signature' });
     }
 
+    // Find and verify order
     const order = await Order.findOne({ orderId });
     if (!order) {
       console.warn(`Order not found for orderId: ${orderId}`);
       return res.status(404).json({ error: 'Order not found' });
     }
 
+    // Verify order eligibility
     if (order.paymentMethod !== 'Razorpay') {
       console.warn(`Invalid payment method for verification: ${order.paymentMethod} for orderId: ${orderId}`);
       return res.status(400).json({ error: 'Invalid payment method for this order' });
@@ -413,14 +420,17 @@ router.post('/verify-razorpay-payment', async (req, res) => {
       return res.status(400).json({ error: 'Razorpay order ID mismatch' });
     }
 
+    // Check order timeout
     if (!isOrderValid(order.createdAt)) {
       console.warn(`Order timed out for orderId: ${orderId}`);
       return res.status(400).json({ error: 'Order has expired. Please create a new order.' });
     }
 
+    // Update order
     order.razorpayPaymentId = razorpay_payment_id;
     order.paymentStatus = 'Success';
 
+    // Save order
     await order.save();
 
     console.log(`Razorpay payment verified and order updated: ${orderId}`, {
@@ -430,15 +440,12 @@ router.post('/verify-razorpay-payment', async (req, res) => {
       total: order.total,
     });
 
+    // Send confirmation email
     if (!order.emailSent) {
       try {
         const html = await generateOrderEmail({
           ...order.toObject(),
-          createdAt: new Date(order.createdAt).toLocaleDateString('en-IN', {
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric',
-          }),
+          createdAt: order.createdAt.toISOString().split('T')[0],
         });
         await sendEmail({
           email: order.customer.email,
@@ -449,7 +456,7 @@ router.post('/verify-razorpay-payment', async (req, res) => {
         await order.save();
         console.log(`Confirmation email sent for order: ${order.orderId}`);
       } catch (emailError) {
-        console.error(`Failed to send email for order ${orderId}:`, emailError.message);
+        console.error(`Failed to send email for order ${orderId}: ${emailError.message}`);
       }
     }
 
@@ -623,11 +630,7 @@ router.post('/force-update/:orderId', authenticateAdmin, async (req, res) => {
       try {
         const html = await generateOrderEmail({
           ...order.toObject(),
-          createdAt: new Date(order.createdAt).toLocaleDateString('en-IN', {
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric',
-          }),
+          createdAt: order.createdAt.toISOString().split('T')[0],
         });
         await sendEmail({
           email: order.customer.email,

@@ -52,7 +52,7 @@ global.clients = new Set();
 // Environment-specific settings
 const isProduction = process.env.NODE_ENV === 'production';
 const cookieSecure = isProduction; // Secure cookies only in production (HTTPS)
-const cookieSameSite = isProduction ? 'None' : 'Lax'; // None for cross-origin in production
+const cookieSameSite = isProduction ? 'None' : 'Lax'; // None for cross-origin in production, Lax for localhost
 
 // Rate limiting middleware
 const limiter = rateLimit({
@@ -111,7 +111,7 @@ app.use(
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token'],
     credentials: true,
-    exposedHeaders: ['Vary', 'Set-Cookie'],
+    exposedHeaders: ['Vary'],
   })
 );
 
@@ -124,17 +124,13 @@ app.use((req, res, next) => {
 // CSRF protection
 const csrfProtection = csurf({
   cookie: {
-    key: '_csrf', // Explicitly set cookie name
     httpOnly: true,
     secure: cookieSecure,
     sameSite: cookieSameSite,
-    maxAge: 24 * 60 * 60, // 24 hours
   },
 });
-
-// Apply CSRF middleware selectively
 app.use((req, res, next) => {
-  // Skip CSRF for specific routes
+  // Skip CSRF for GET, order-updates, and DELETE with valid JWT
   if (
     req.path === '/api/order-updates' ||
     req.method === 'GET' ||
@@ -160,7 +156,6 @@ app.use((req, res, next) => {
           'x-csrf-token': req.headers['x-csrf-token'] || 'none',
           cookie_csrf: req.cookies._csrf || 'none',
         },
-        origin: req.headers.origin || 'none',
       });
       return res.status(403).json({ error: 'Invalid CSRF token' });
     }
@@ -176,12 +171,6 @@ app.get('/api/csrf-token', csrfProtection, (req, res) => {
       req.headers.origin || 'none'
     }`
   );
-  res.cookie('_csrf', token, {
-    httpOnly: true,
-    secure: cookieSecure,
-    sameSite: cookieSameSite,
-    maxAge: 24 * 60 * 60 * 1000, // 24 hours
-  });
   res.json({ csrfToken: token });
 });
 
@@ -243,7 +232,7 @@ app.use((req, res, next) => {
 
 // Environment configuration logging
 console.log('Environment Configuration:', {
-  NODE_ENV: process.env.NODE_ENV || 'development',
+  NODE_ENV: process.env.NODE_ENV,
   PORT: process.env.PORT || 5001,
   MONGO_URI: process.env.MONGO_URI ? 'Set' : 'Not set',
   JWT_SECRET: process.env.JWT_SECRET ? 'Set' : 'Not set',
@@ -305,7 +294,7 @@ const connectDB = async (retries = 5, delay = 5000) => {
       if (isMongoAtlas) {
         mongooseOptions.tls = true;
       } else {
-        mongooseOptions.tls = isProduction;
+        mongooseOptions.tls = isProduction; // TLS only in production for non-Atlas
       }
 
       await mongoose.connect(process.env.MONGO_URI, mongooseOptions);
@@ -367,7 +356,7 @@ app.use((err, req, res, next) => {
     path: req.path,
     method: req.method,
     ip: req.ip,
-    stack: err.stack,
+    stack: err.stack, // Include stack trace for debugging
   });
   if (err.name === 'ValidationError') {
     return res.status(400).json({ error: 'Validation error', details: err.errors });
