@@ -65,6 +65,43 @@ const VALIDATION_REGEX = {
 
 router.post('/', async (req, res) => {
   try {
+    // Check CSRF token (relaxed for mobile compatibility)
+    const csrfToken = req.headers['x-csrf-token'];
+    const csrfCookie = req.cookies['_csrf'] || 'none';
+    const validOrigin = req.headers.origin === 'https://www.nisargmaitri.in';
+
+    if (!csrfToken || !validOrigin) {
+      console.warn('CSRF validation failed for POST /api/orders', {
+        ip: req.ip,
+        headers: {
+          'x-csrf-token': csrfToken ? '<hidden>' : 'missing',
+          cookie_csrf: csrfCookie,
+          origin: req.headers.origin,
+        },
+      });
+      return res.status(403).json({ error: 'CSRF validation failed' });
+    }
+
+    // Allow requests with valid token and origin, even if cookie is missing (mobile workaround)
+    if (csrfCookie === 'none') {
+      console.warn('CSRF cookie missing, allowing request due to valid token and origin', {
+        ip: req.ip,
+        csrfToken: csrfToken ? '<hidden>' : 'missing',
+        origin: req.headers.origin,
+        userAgent: req.headers['user-agent'],
+      });
+    } else if (csrfToken !== csrfCookie) {
+      console.warn('CSRF token mismatch for POST /api/orders', {
+        ip: req.ip,
+        headers: {
+          'x-csrf-token': csrfToken ? '<hidden>' : 'missing',
+          cookie_csrf: csrfCookie,
+        },
+        userAgent: req.headers['user-agent'],
+      });
+      return res.status(403).json({ error: 'CSRF token mismatch' });
+    }
+
     // Sanitize and validate input data
     const orderData = {
       ...req.body,
