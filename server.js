@@ -8,7 +8,7 @@ const csurf = require('csurf');
 const cookieParser = require('cookie-parser');
 const cron = require('node-cron');
 const jwt = require('jsonwebtoken');
-const Order = require('./models/Order');
+const Order = require('./models/order');
 const authRoutes = require('./routes/auth');
 const orderRoutes = require('./routes/orders');
 const contactRoutes = require('./routes/contact');
@@ -110,8 +110,8 @@ app.use(
 const csrfProtection = csurf({
   cookie: {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax',
+   secure: true, 
+    sameSite: 'None'
   },
 });
 app.use((req, res, next) => {

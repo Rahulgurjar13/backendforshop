@@ -3,7 +3,7 @@ const router = express.Router();
 const Razorpay = require('razorpay');
 const crypto = require('crypto');
 const sanitize = require('sanitize-html');
-const Order = require('../models/Order');
+const Order = require('../models/order');
 const { authenticateAdmin } = require('../middleware/authenticateAdmin');
 const { sendEmail, generateOrderEmail } = require('../utils/email');
 
