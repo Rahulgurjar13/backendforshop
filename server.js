@@ -51,6 +51,8 @@ global.clients = new Set();
 
 // Environment-specific settings
 const isProduction = process.env.NODE_ENV === 'production';
+const cookieSecure = isProduction; // Secure cookies only in production (HTTPS)
+const cookieSameSite = isProduction ? 'None' : 'Lax'; // None for cross-origin in production, Lax for localhost
 
 // Rate limiting middleware
 const limiter = rateLimit({
@@ -123,8 +125,8 @@ app.use((req, res, next) => {
 const csrfProtection = csurf({
   cookie: {
     httpOnly: true,
-    secure: true, // Always secure (HTTPS) since frontend uses HTTPS
-    sameSite: 'None', // Allow cross-origin cookies for mobile compatibility
+    secure: cookieSecure,
+    sameSite: cookieSameSite,
   },
 });
 app.use((req, res, next) => {
