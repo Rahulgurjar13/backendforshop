@@ -49,10 +49,15 @@ app.set('trust proxy', 1);
 // Store SSE clients
 global.clients = new Set();
 
+// Environment-specific settings
+const isProduction = process.env.NODE_ENV === 'production';
+const cookieSecure = isProduction; // Secure cookies only in production (HTTPS)
+const cookieSameSite = isProduction ? 'None' : 'Lax'; // None for cross-origin in production, Lax for localhost
+
 // Rate limiting middleware
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: process.env.NODE_ENV === 'production' ? 500 : 1000,
+  max: isProduction ? 500 : 1000,
   message: 'Too many requests from this IP, please try again later.',
   keyGenerator: (req) => req.ip,
   handler: (req, res) => {
@@ -75,15 +80,17 @@ app.use(
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        scriptSrc: ["'self'", process.env.NODE_ENV === 'development' ? "'unsafe-inline'" : null].filter(Boolean),
+        scriptSrc: ["'self'", !isProduction ? "'unsafe-inline'" : null].filter(Boolean),
         styleSrc: ["'self'", "'unsafe-inline'"],
         connectSrc: [
           "'self'",
           process.env.BACKEND_URL,
           process.env.FRONTEND_URL,
           'https://api.razorpay.com',
-          process.env.NODE_ENV === 'development' ? 'https://backendforshop.onrender.com' : null,
-          process.env.NODE_ENV === 'development' ? 'https://www.nisargmaitri.in' : null,
+          isProduction ? 'https://backendforshop.onrender.com' : null,
+          isProduction ? 'https://www.nisargmaitri.in' : null,
+          !isProduction ? 'http://localhost:5001' : null,
+          !isProduction ? 'http://localhost:3000' : null,
         ].filter(Boolean),
       },
     },
@@ -94,7 +101,8 @@ app.use(
 app.use(
   cors({
     origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV === 'development') {
+      console.log(`CORS check for origin: ${origin || 'none'}`);
+      if (!origin || allowedOrigins.includes(origin) || !isProduction) {
         callback(null, true);
       } else {
         callback(new Error(`CORS error: Origin ${origin} not allowed`));
@@ -103,29 +111,49 @@ app.use(
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token'],
     credentials: true,
+    exposedHeaders: ['Vary'],
   })
 );
+
+// Add Vary: Origin header to prevent CORS caching issues
+app.use((req, res, next) => {
+  res.set('Vary', 'Origin');
+  next();
+});
 
 // CSRF protection
 const csrfProtection = csurf({
   cookie: {
     httpOnly: true,
-   secure: true, 
-    sameSite: 'None'
+    secure: cookieSecure,
+    sameSite: cookieSameSite,
   },
 });
 app.use((req, res, next) => {
-  if (req.path === '/api/order-updates' || req.method === 'GET') {
+  // Skip CSRF for GET, order-updates, and optionally DELETE (if authenticated)
+  if (
+    req.path === '/api/order-updates' ||
+    req.method === 'GET' ||
+    (req.method === 'DELETE' && req.path.startsWith('/api/orders/') && req.headers.authorization)
+  ) {
     return next();
   }
-  console.log(`CSRF check for ${req.method} ${req.path}, token: ${req.headers['x-csrf-token'] || 'none'}, cookie: ${req.cookies._csrf || 'none'}`);
+  console.log(
+    `CSRF check for ${req.method} ${req.path}, token: ${req.headers['x-csrf-token'] || 'none'}, cookie: ${
+      req.cookies._csrf || 'none'
+    }`
+  );
   csrfProtection(req, res, next);
 });
 
 // CSRF token endpoint
 app.get('/api/csrf-token', csrfProtection, (req, res) => {
   const token = req.csrfToken();
-  console.log(`Generated CSRF token: ${token} for IP: ${req.ip}`);
+  console.log(
+    `Generated CSRF token: ${token}, Set-Cookie: _csrf=${req.cookies._csrf || 'new'}, IP: ${req.ip}, Origin: ${
+      req.headers.origin || 'none'
+    }`
+  );
   res.json({ csrfToken: token });
 });
 
@@ -133,13 +161,14 @@ app.get('/api/csrf-token', csrfProtection, (req, res) => {
 app.get('/api/order-updates', async (req, res) => {
   const token = req.query.token;
   if (!token) {
+    console.warn(`No token provided for SSE at /api/order-updates, IP: ${req.ip}`);
     return res.status(401).send('Unauthorized');
   }
 
   try {
     jwt.verify(token, process.env.JWT_SECRET);
   } catch (err) {
-    console.warn(`Invalid SSE token: ${err.message}`);
+    console.warn(`Invalid SSE token: ${err.message}, IP: ${req.ip}`);
     return res.status(401).send('Invalid token');
   }
 
@@ -248,7 +277,7 @@ const connectDB = async (retries = 5, delay = 5000) => {
       if (isMongoAtlas) {
         mongooseOptions.tls = true;
       } else {
-        mongooseOptions.tls = false;
+        mongooseOptions.tls = isProduction; // TLS only in production for non-Atlas
       }
 
       await mongoose.connect(process.env.MONGO_URI, mongooseOptions);
@@ -284,7 +313,7 @@ connectDB();
 // Start server
 const PORT = process.env.PORT || 5001;
 const server = app.listen(PORT, () => {
-  console.log(`🚗 Server running on port ${PORT}`);
+  console.log(`🚗 Server running on port ${PORT} (${isProduction ? 'Production' : 'Development'})`);
 });
 
 // Handle uncaught exceptions and rejections
@@ -310,6 +339,7 @@ app.use((err, req, res, next) => {
     path: req.path,
     method: req.method,
     ip: req.ip,
+    stack: err.stack, // Include stack trace for debugging
   });
   if (err.name === 'ValidationError') {
     return res.status(400).json({ error: 'Validation error', details: err.errors });
