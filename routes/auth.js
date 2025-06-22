@@ -6,13 +6,10 @@ const sanitize = require('sanitize-html');
 const { checkAdminStatus } = require('../middleware/authenticateAdmin');
 const csurf = require('csurf');
 
-// Apply CSRF protection explicitly
+// Apply CSRF protection (no cookie, accept token in header or body)
 const csrfProtection = csurf({
-  cookie: {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: process.env.NODE_ENV === 'production' ? 'None' : 'Lax', // Changed to 'None' in production
-  },
+  cookie: false, // Disable CSRF cookie
+  value: (req) => req.headers['x-csrf-token'] || req.body.csrf_token || null,
 });
 
 // Login endpoint
@@ -70,7 +67,7 @@ router.post('/login', csrfProtection, async (req, res) => {
   }
 });
 
-// Check admin status endpoint
+// Check admin status endpoint (no CSRF, as it's a GET request)
 router.get('/check-admin', checkAdminStatus);
 
 module.exports = router;
