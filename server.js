@@ -130,17 +130,12 @@ const csrfProtection = csurf({
   },
 });
 app.use((req, res, next) => {
-  // Skip CSRF for GET, order-updates, and DELETE with valid JWT
+  // Skip CSRF for GET, order-updates, and optionally DELETE (if authenticated)
   if (
     req.path === '/api/order-updates' ||
     req.method === 'GET' ||
     (req.method === 'DELETE' && req.path.startsWith('/api/orders/') && req.headers.authorization)
   ) {
-    console.log(
-      `Skipping CSRF for ${req.method} ${req.path}, Authorization: ${
-        req.headers.authorization ? 'Present' : 'None'
-      }`
-    );
     return next();
   }
   console.log(
@@ -148,19 +143,7 @@ app.use((req, res, next) => {
       req.cookies._csrf || 'none'
     }`
   );
-  csrfProtection(req, res, (err) => {
-    if (err && err.code === 'EBADCSRFTOKEN') {
-      console.error(`CSRF validation failed for ${req.method} ${req.path}`, {
-        ip: req.ip,
-        headers: {
-          'x-csrf-token': req.headers['x-csrf-token'] || 'none',
-          cookie_csrf: req.cookies._csrf || 'none',
-        },
-      });
-      return res.status(403).json({ error: 'Invalid CSRF token' });
-    }
-    next(err);
-  });
+  csrfProtection(req, res, next);
 });
 
 // CSRF token endpoint
@@ -364,7 +347,7 @@ app.use((err, req, res, next) => {
   if (err.message.includes('Not allowed by CORS')) {
     return res.status(403).json({ error: 'CORS error', details: err.message });
   }
-  if (err.code === 'EBADCSRFTOKEN') {
+  if (err.code === 'EBADCSRFTOKEN')  {
     return res.status(403).json({ error: 'Invalid CSRF token' });
   }
   res.status(500).json({ error: 'Internal server error', details: err.message });

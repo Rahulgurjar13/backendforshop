@@ -454,9 +454,9 @@ router.post('/verify-razorpay-payment', async (req, res) => {
         });
         order.emailSent = true;
         await order.save();
-        console.log(`Confirmation email sent for order: ${order.orderId}`);
+        console.log(`Confirmation email sent for Razorpay order: ${orderId}`);
       } catch (emailError) {
-        console.error(`Failed to send email for order ${orderId}: ${emailError.message}`);
+        console.error(`Failed to send email for Razorpay order ${orderId}:`, emailError.message);
       }
     }
 
@@ -465,9 +465,8 @@ router.post('/verify-razorpay-payment', async (req, res) => {
       order: {
         orderId: order.orderId,
         paymentStatus: order.paymentStatus,
-        paymentId: order.razorpayPaymentId,
+        razorpayPaymentId: order.razorpayPaymentId,
         razorpayOrderId: order.razorpayOrderId,
-        emailSent: order.emailSent,
         total: order.total,
         customer: order.customer,
         shippingAddress: order.shippingAddress,
@@ -489,18 +488,18 @@ router.get('/pending', authenticateAdmin, async (req, res) => {
       paymentMethod: 'Razorpay',
     }).sort({ createdAt: -1 });
 
-    console.log(`Fetched ${pendingOrders.length} pending orders`);
+    console.log(`Fetched ${pendingOrders.length} pending Razorpay orders`);
     res.status(200).json(pendingOrders);
   } catch (error) {
-    handleError(res, error, 'Failed to get pending orders');
+    handleError(res, error, 'Failed to fetch pending orders');
   }
 });
 
-router.get('/orders/:orderId', async (req, res) => {
+router.get('/pending/:orderId', async (req, res) => {
   try {
     const { orderId } = req.params;
     if (!orderId || typeof orderId !== 'string' || orderId.trim() === '') {
-      return res.status(400).json({ error: 'Invalid order ID' });
+      return res.status(400).json({ error: 'Invalid orderId' });
     }
 
     const order = await Order.findOne({
@@ -510,18 +509,18 @@ router.get('/orders/:orderId', async (req, res) => {
     });
 
     if (!order) {
-      console.warn(`No order found for orderId: ${orderId}`);
-      return res.status(404).json({ error: 'No order found' });
+      console.warn(`Pending order not found for orderId: ${orderId}`);
+      return res.status(404).json({ error: 'Pending order not found' });
     }
 
-    console.log(`Fetched order: ${orderId}`);
+    console.log(`Fetched pending order: ${orderId}`);
     res.status(200).json(order);
   } catch (error) {
-    handleError(res, error, 'Failed to get order');
+    handleError(res, error, 'Failed to fetch pending order');
   }
 });
 
-router.delete('/:orderId', authenticateAdmin, async (req, res) => {
+router.delete('/:orderId', async (req, res) => {
   try {
     const { orderId } = req.params;
     if (!orderId || typeof orderId !== 'string' || orderId.trim() === '') {
