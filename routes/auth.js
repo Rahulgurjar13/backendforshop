@@ -74,3 +74,4 @@ router.post('/login', csrfProtection, async (req, res) => {
 router.get('/check-admin', checkAdminStatus);
 
 module.exports = router;
+
