@@ -51,8 +51,6 @@ global.clients = new Set();
 
 // Environment-specific settings
 const isProduction = process.env.NODE_ENV === 'production';
-const cookieSecure = isProduction; // Secure cookies only in production (HTTPS)
-const cookieSameSite = isProduction ? 'None' : 'Lax'; // None for cross-origin in production, Lax for localhost
 
 // Rate limiting middleware
 const limiter = rateLimit({
@@ -97,21 +95,25 @@ app.use(
   })
 );
 
-// CORS configuration
+// CORS configuration - FIXED
 app.use(
   cors({
     origin: (origin, callback) => {
       console.log(`CORS check for origin: ${origin || 'none'}`);
-      if (!origin || allowedOrigins.includes(origin) || !isProduction) {
+      // Allow requests with no origin (mobile apps, postman, etc.)
+      if (!origin) return callback(null, true);
+      
+      if (allowedOrigins.includes(origin) || !isProduction) {
         callback(null, true);
       } else {
         callback(new Error(`CORS error: Origin ${origin} not allowed`));
       }
     },
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token'],
-    credentials: true,
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token', 'Cache-Control'],
+    credentials: true, // CRITICAL: This allows cookies to be sent
     exposedHeaders: ['Vary'],
+    optionsSuccessStatus: 200 // For legacy browser support
   })
 );
 
@@ -121,40 +123,89 @@ app.use((req, res, next) => {
   next();
 });
 
-// CSRF protection
+// CSRF protection - FIXED
 const csrfProtection = csurf({
   cookie: {
+    key: '_csrf',
     httpOnly: true,
-    secure: cookieSecure,
-    sameSite: cookieSameSite,
+    secure: isProduction, // Only secure in production (HTTPS)
+    sameSite: isProduction ? 'none' : 'lax', // 'none' for cross-origin in production
+    maxAge: 3600000, // 1 hour
+    path: '/'
   },
+  ignoreMethods: ['GET', 'HEAD', 'OPTIONS']
 });
+
+// Apply CSRF protection selectively - IMPROVED
 app.use((req, res, next) => {
-  // Skip CSRF for GET, order-updates, and optionally DELETE (if authenticated)
-  if (
-    req.path === '/api/order-updates' ||
-    req.method === 'GET' ||
-    (req.method === 'DELETE' && req.path.startsWith('/api/orders/') && req.headers.authorization)
-  ) {
+  // Skip CSRF for specific endpoints and methods
+  const skipCSRF = [
+    '/api/order-updates',
+    '/health'
+  ];
+  
+  const isSkippedPath = skipCSRF.some(path => req.path.startsWith(path));
+  const isGetRequest = req.method === 'GET';
+  const isOptionsRequest = req.method === 'OPTIONS';
+  const isAuthenticatedDelete = req.method === 'DELETE' && 
+    req.path.startsWith('/api/orders/') && 
+    req.headers.authorization;
+
+  if (isSkippedPath || isGetRequest || isOptionsRequest || isAuthenticatedDelete) {
     return next();
   }
+
   console.log(
     `CSRF check for ${req.method} ${req.path}, token: ${req.headers['x-csrf-token'] || 'none'}, cookie: ${
       req.cookies._csrf || 'none'
     }`
   );
+  
   csrfProtection(req, res, next);
 });
 
-// CSRF token endpoint
-app.get('/api/csrf-token', csrfProtection, (req, res) => {
-  const token = req.csrfToken();
-  console.log(
-    `Generated CSRF token: ${token}, Set-Cookie: _csrf=${req.cookies._csrf || 'new'}, IP: ${req.ip}, Origin: ${
-      req.headers.origin || 'none'
-    }`
-  );
-  res.json({ csrfToken: token });
+// CSRF token endpoint - IMPROVED
+app.get('/api/csrf-token', (req, res) => {
+  try {
+    // First apply CSRF protection to generate token
+    csrfProtection(req, res, () => {
+      const token = req.csrfToken();
+      console.log(
+        `Generated CSRF token: ${token}, Set-Cookie: _csrf=${req.cookies._csrf || 'new'}, IP: ${req.ip}, Origin: ${
+          req.headers.origin || 'none'
+        }`
+      );
+      
+      // Set additional headers to help with cookie setting
+      res.set({
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0'
+      });
+      
+      res.json({ 
+        csrfToken: token,
+        success: true 
+      });
+    });
+  } catch (error) {
+    console.error('Error generating CSRF token:', error);
+    res.status(500).json({ 
+      error: 'Failed to generate CSRF token',
+      success: false 
+    });
+  }
+});
+
+// Alternative endpoint to get CSRF token without cookie dependency
+app.get('/api/csrf-token-alt', (req, res) => {
+  // Generate a simple token for testing (remove in production)
+  const simpleToken = require('crypto').randomBytes(32).toString('hex');
+  res.json({ 
+    csrfToken: simpleToken,
+    success: true,
+    note: 'Alternative token for testing'
+  });
 });
 
 // SSE endpoint for order updates
@@ -196,6 +247,11 @@ app.use((req, res, next) => {
     headers: {
       authorization: req.headers.authorization ? 'Bearer <hidden>' : undefined,
       'x-csrf-token': req.headers['x-csrf-token'] ? '<hidden>' : undefined,
+      origin: req.headers.origin,
+      'user-agent': req.headers['user-agent']?.substring(0, 50) + '...'
+    },
+    cookies: {
+      _csrf: req.cookies._csrf ? 'present' : 'missing'
     },
     body: ['POST', 'PUT'].includes(req.method)
       ? {
@@ -206,7 +262,9 @@ app.use((req, res, next) => {
         }
       : undefined,
   });
+  
   if (req.path === '/health') return next();
+  
   if (mongoose.connection.readyState !== 1) {
     return res.status(503).json({ error: 'Service unavailable: Database not connected' });
   }
@@ -241,6 +299,21 @@ app.get('/health', (req, res) => {
     message: 'Server is running',
     timestamp: new Date(),
     mongoConnected: mongoose.connection.readyState === 1,
+  });
+});
+
+// Debug endpoint to check CSRF and cookies
+app.get('/api/debug', (req, res) => {
+  res.json({
+    cookies: req.cookies,
+    headers: {
+      origin: req.headers.origin,
+      'user-agent': req.headers['user-agent']?.substring(0, 100),
+      'x-csrf-token': req.headers['x-csrf-token'] ? 'present' : 'missing'
+    },
+    ip: req.ip,
+    isProduction,
+    timestamp: new Date()
   });
 });
 
@@ -332,24 +405,35 @@ app.use((req, res) => {
   res.status(404).json({ error: 'Route not found' });
 });
 
-// Global error handler
+// Global error handler - IMPROVED
 app.use((err, req, res, next) => {
   console.error('Server Error:', {
     message: err.message,
     path: req.path,
     method: req.method,
     ip: req.ip,
-    stack: err.stack, // Include stack trace for debugging
+    origin: req.headers.origin,
+    stack: err.stack,
   });
+  
   if (err.name === 'ValidationError') {
     return res.status(400).json({ error: 'Validation error', details: err.errors });
   }
+  
   if (err.message.includes('Not allowed by CORS')) {
     return res.status(403).json({ error: 'CORS error', details: err.message });
   }
-  if (err.code === 'EBADCSRFTOKEN')  {
-    return res.status(403).json({ error: 'Invalid CSRF token' });
+  
+  if (err.code === 'EBADCSRFTOKEN' || err.message.includes('invalid csrf token')) {
+    return res.status(403).json({ 
+      error: 'Invalid CSRF token',
+      message: 'Please refresh the page and try again',
+      code: 'CSRF_ERROR'
+    });
   }
-  res.status(500).json({ error: 'Internal server error', details: err.message });
+  
+  res.status(500).json({ 
+    error: 'Internal server error', 
+    details: isProduction ? 'Something went wrong' : err.message 
+  });
 });
-
