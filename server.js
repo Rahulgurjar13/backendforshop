@@ -69,14 +69,7 @@ const limiter = rateLimit({
   },
 });
 
-// Exclude /api/csrf-token and /health from rate limiting
-app.use((req, res, next) => {
-  if (req.path === '/health' || req.path === '/api/csrf-token') {
-    return next();
-  }
-  limiter(req, res, next);
-});
-
+app.use(limiter);
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
@@ -128,14 +121,16 @@ app.use((req, res, next) => {
   next();
 });
 
-// CSRF protection (no cookie, accept token in header or body)
+// CSRF protection
 const csrfProtection = csurf({
-  cookie: false, // Disable CSRF cookie
-  value: (req) => req.headers['x-csrf-token'] || req.body.csrf_token || null,
+  cookie: {
+    httpOnly: true,
+    secure: cookieSecure,
+    sameSite: cookieSameSite,
+  },
 });
-
-// Apply CSRF protection, skipping for GET, /api/order-updates, and authenticated DELETE /api/orders
 app.use((req, res, next) => {
+  // Skip CSRF for GET, order-updates, and optionally DELETE (if authenticated)
   if (
     req.path === '/api/order-updates' ||
     req.method === 'GET' ||
@@ -144,16 +139,20 @@ app.use((req, res, next) => {
     return next();
   }
   console.log(
-    `CSRF check for ${req.method} ${req.path}, token: ${req.headers['x-csrf-token'] || req.body.csrf_token || 'none'}`
+    `CSRF check for ${req.method} ${req.path}, token: ${req.headers['x-csrf-token'] || 'none'}, cookie: ${
+      req.cookies._csrf || 'none'
+    }`
   );
   csrfProtection(req, res, next);
 });
 
-// CSRF token endpoint (no CSRF protection to avoid circular dependency)
-app.get('/api/csrf-token', (req, res) => {
+// CSRF token endpoint
+app.get('/api/csrf-token', csrfProtection, (req, res) => {
   const token = req.csrfToken();
   console.log(
-    `Generated CSRF token: ${token}, IP: ${req.ip}, Origin: ${req.headers.origin || 'none'}`
+    `Generated CSRF token: ${token}, Set-Cookie: _csrf=${req.cookies._csrf || 'new'}, IP: ${req.ip}, Origin: ${
+      req.headers.origin || 'none'
+    }`
   );
   res.json({ csrfToken: token });
 });
@@ -197,7 +196,6 @@ app.use((req, res, next) => {
     headers: {
       authorization: req.headers.authorization ? 'Bearer <hidden>' : undefined,
       'x-csrf-token': req.headers['x-csrf-token'] ? '<hidden>' : undefined,
-      csrf_token: req.body.csrf_token ? '<hidden>' : undefined,
     },
     body: ['POST', 'PUT'].includes(req.method)
       ? {
@@ -205,7 +203,6 @@ app.use((req, res, next) => {
           customer: req.body.customer
             ? { ...req.body.customer, email: req.body.customer.email?.replace(/(.{2}).*@/, '$1***@') }
             : undefined,
-          csrf_token: req.body.csrf_token ? '<hidden>' : undefined,
         }
       : undefined,
   });
@@ -280,7 +277,7 @@ const connectDB = async (retries = 5, delay = 5000) => {
       if (isMongoAtlas) {
         mongooseOptions.tls = true;
       } else {
-        mongooseOptions.tls = isProduction;
+        mongooseOptions.tls = isProduction; // TLS only in production for non-Atlas
       }
 
       await mongoose.connect(process.env.MONGO_URI, mongooseOptions);
@@ -342,7 +339,7 @@ app.use((err, req, res, next) => {
     path: req.path,
     method: req.method,
     ip: req.ip,
-    stack: err.stack,
+    stack: err.stack, // Include stack trace for debugging
   });
   if (err.name === 'ValidationError') {
     return res.status(400).json({ error: 'Validation error', details: err.errors });
@@ -350,8 +347,9 @@ app.use((err, req, res, next) => {
   if (err.message.includes('Not allowed by CORS')) {
     return res.status(403).json({ error: 'CORS error', details: err.message });
   }
-  if (err.code === 'EBADCSRFTOKEN') {
+  if (err.code === 'EBADCSRFTOKEN')  {
     return res.status(403).json({ error: 'Invalid CSRF token' });
   }
   res.status(500).json({ error: 'Internal server error', details: err.message });
 });
+
