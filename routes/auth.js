@@ -4,19 +4,9 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const sanitize = require('sanitize-html');
 const { checkAdminStatus } = require('../middleware/authenticateAdmin');
-const csurf = require('csurf');
-
-// Apply CSRF protection explicitly
-const csrfProtection = csurf({
-  cookie: {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: process.env.NODE_ENV === 'production' ? 'None' : 'Lax', // Changed to 'None' in production
-  },
-});
 
 // Login endpoint
-router.post('/login', csrfProtection, async (req, res) => {
+router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
 
@@ -74,4 +64,3 @@ router.post('/login', csrfProtection, async (req, res) => {
 router.get('/check-admin', checkAdminStatus);
 
 module.exports = router;
-
